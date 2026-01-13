@@ -71,6 +71,47 @@ function WatchPageContent() {
   // LocalStorage keys
   const PROGRESS_KEY = 'video_progress';
   const VOLUME_KEY = 'video_volume';
+  const RECENTLY_PLAYED_KEY = 'recently_played';
+
+  // Save recently played show to localStorage
+  const saveRecentlyPlayed = (videoPath: string, currentTime: number, duration: number) => {
+    try {
+      const parsedInfo = parseVideoUrl(videoPath);
+      if (!parsedInfo) return;
+
+      const showId = toShowId(parsedInfo.showName);
+      const percentWatched = (currentTime / duration) * 100;
+
+      // Get existing recently played list
+      const savedList = localStorage.getItem(RECENTLY_PLAYED_KEY);
+      let recentlyPlayed: any[] = savedList ? JSON.parse(savedList) : [];
+
+      // Remove existing entry for this show
+      recentlyPlayed = recentlyPlayed.filter(item => item.showId !== showId);
+
+      // Add new entry at the beginning (only if not near the end)
+      if (percentWatched < 95) {
+        recentlyPlayed.unshift({
+          showId,
+          showName: parsedInfo.showName,
+          seasonName: parsedInfo.seasonName,
+          episodeName: parsedInfo.episodeName,
+          videoPath,
+          currentTime,
+          duration,
+          percentWatched,
+          timestamp: Date.now(),
+        });
+      }
+
+      // Keep only the most recent 10 shows
+      recentlyPlayed = recentlyPlayed.slice(0, 10);
+
+      localStorage.setItem(RECENTLY_PLAYED_KEY, JSON.stringify(recentlyPlayed));
+    } catch (error) {
+      console.error('Failed to save recently played:', error);
+    }
+  };
 
   // Save video progress to localStorage
   const saveProgress = (videoPath: string, currentTime: number, duration: number) => {
@@ -87,6 +128,9 @@ function WatchPageContent() {
         timestamp: Date.now(),
       };
       localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+
+      // Also save to recently played
+      saveRecentlyPlayed(videoPath, currentTime, duration);
     } catch (error) {
       console.error('Failed to save video progress:', error);
     }

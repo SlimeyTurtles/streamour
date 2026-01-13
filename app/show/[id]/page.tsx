@@ -51,6 +51,18 @@ function EpisodeCard({ episode, showName, seasonName, onClick }: {
   );
 }
 
+interface RecentlyPlayed {
+  showId: string;
+  showName: string;
+  seasonName: string;
+  episodeName: string;
+  videoPath: string;
+  currentTime: number;
+  duration: number;
+  percentWatched: number;
+  timestamp: number;
+}
+
 export default function ShowDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -59,6 +71,9 @@ export default function ShowDetailPage() {
   const [show, setShow] = useState<Show | null>(null);
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [recentlyPlayedEpisode, setRecentlyPlayedEpisode] = useState<RecentlyPlayed | null>(null);
+  const [thumbnailError, setThumbnailError] = useState(false);
+  const [startThumbnailError, setStartThumbnailError] = useState(false);
 
   useEffect(() => {
     fetch('/api/shows')
@@ -67,6 +82,7 @@ export default function ShowDetailPage() {
         const foundShow = shows.find(s => s.id === showId);
         if (foundShow) {
           setShow(foundShow);
+          loadRecentlyPlayedForShow(showId);
         }
         setLoading(false);
       })
@@ -75,6 +91,52 @@ export default function ShowDetailPage() {
         setLoading(false);
       });
   }, [showId]);
+
+  const loadRecentlyPlayedForShow = (currentShowId: string) => {
+    try {
+      const saved = localStorage.getItem('recently_played');
+      if (saved) {
+        const recentlyPlayed: RecentlyPlayed[] = JSON.parse(saved);
+        const episode = recentlyPlayed.find(item => item.showId === currentShowId);
+        if (episode) {
+          setRecentlyPlayedEpisode(episode);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading recently played:', error);
+    }
+  };
+
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleContinueWatching = () => {
+    if (!recentlyPlayedEpisode) return;
+    const params = new URLSearchParams({
+      video: recentlyPlayedEpisode.videoPath,
+      title: `${recentlyPlayedEpisode.showName} - ${recentlyPlayedEpisode.seasonName} - ${recentlyPlayedEpisode.episodeName}`,
+    });
+    router.push(`/watch?${params.toString()}`);
+  };
+
+  const handleStartWatching = () => {
+    if (!show || show.seasons.length === 0 || show.seasons[0].episodes.length === 0) return;
+
+    const firstEpisode = show.seasons[0].episodes[0];
+    const params = new URLSearchParams({
+      video: firstEpisode.path,
+      title: `${show.name} - ${show.seasons[0].name} - ${firstEpisode.name}`,
+      ...(firstEpisode.subtitles ? { subtitles: firstEpisode.subtitles } : {}),
+    });
+    router.push(`/watch?${params.toString()}`);
+  };
+
+  const getEpisodeThumbnail = (videoPath: string): string => {
+    return videoPath.replace(/\.(mp4|mkv|avi|mov)$/i, '.jpg');
+  };
 
   if (loading) {
     return (
@@ -128,6 +190,125 @@ export default function ShowDetailPage() {
           </div>
         </div>
       </header>
+
+      {/* Continue/Start Watching Card */}
+      <div className="px-6 py-6 border-b border-gray-800/50">
+        <div className="max-w-7xl mx-auto">
+          {recentlyPlayedEpisode ? (
+            <div
+              onClick={handleContinueWatching}
+              className="bg-gradient-to-br from-red-900/20 via-red-800/15 to-gray-900/20 rounded-xl overflow-hidden cursor-pointer hover:from-red-900/30 hover:via-red-800/25 hover:to-gray-900/30 transition-all border border-red-800/40 shadow-2xl group"
+            >
+              <div className="flex flex-col md:flex-row items-stretch gap-0">
+                {/* Episode Thumbnail */}
+                <div className="md:w-2/5 aspect-video md:aspect-auto bg-gray-800 relative">
+                  {!thumbnailError ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={getEpisodeThumbnail(recentlyPlayedEpisode.videoPath)}
+                        alt={recentlyPlayedEpisode.episodeName}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onError={() => setThumbnailError(true)}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent to-red-900/20 group-hover:to-red-900/40 transition-all"></div>
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+                        <div className="w-20 h-20 rounded-full bg-red-600/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all transform scale-75 group-hover:scale-100">
+                          <div className="text-4xl text-white ml-1">▶</div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-600">
+                      <div className="text-6xl">▶</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 p-6 md:p-8 flex flex-col justify-center">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <span className="text-red-400 text-sm font-semibold uppercase tracking-wider">Continue Watching</span>
+                  </div>
+                  <h3 className="text-2xl md:text-3xl font-bold text-white group-hover:text-red-300 transition-colors mb-2">
+                    {recentlyPlayedEpisode.episodeName}
+                  </h3>
+                  <p className="text-gray-400 text-lg mb-6">
+                    {recentlyPlayedEpisode.seasonName}
+                  </p>
+                  <div className="max-w-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-gray-400">
+                        {formatTime(recentlyPlayedEpisode.currentTime)} / {formatTime(recentlyPlayedEpisode.duration)}
+                      </span>
+                      <span className="text-sm text-gray-400 font-semibold">
+                        {Math.round(recentlyPlayedEpisode.percentWatched)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-700/50 rounded-full h-2.5 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-red-600 to-red-500 h-full rounded-full transition-all shadow-lg shadow-red-500/50"
+                        style={{ width: `${Math.min(recentlyPlayedEpisode.percentWatched, 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={handleStartWatching}
+              className="bg-gradient-to-br from-indigo-900/20 via-indigo-800/15 to-gray-900/20 rounded-xl overflow-hidden cursor-pointer hover:from-indigo-900/30 hover:via-indigo-800/25 hover:to-gray-900/30 transition-all border border-indigo-800/40 shadow-2xl group"
+            >
+              <div className="flex flex-col md:flex-row items-stretch gap-0">
+                {/* Episode Thumbnail */}
+                <div className="md:w-2/5 aspect-video md:aspect-auto bg-gray-800 relative">
+                  {show && show.seasons.length > 0 && show.seasons[0].episodes.length > 0 && !startThumbnailError ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={getEpisodeThumbnail(show.seasons[0].episodes[0].path)}
+                        alt={show.seasons[0].episodes[0].name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        onError={() => setStartThumbnailError(true)}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent to-indigo-900/20 group-hover:to-indigo-900/40 transition-all"></div>
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+                        <div className="w-20 h-20 rounded-full bg-indigo-600/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all transform scale-75 group-hover:scale-100">
+                          <div className="text-4xl text-white ml-1">▶</div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-600">
+                      <div className="text-6xl">▶</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 p-6 md:p-8 flex flex-col justify-center">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
+                    <span className="text-indigo-400 text-sm font-semibold uppercase tracking-wider">Start Watching</span>
+                  </div>
+                  <h3 className="text-2xl md:text-3xl font-bold text-white group-hover:text-indigo-300 transition-colors mb-2">
+                    {show && show.seasons.length > 0 && show.seasons[0].episodes.length > 0
+                      ? show.seasons[0].episodes[0].name
+                      : 'Episode 1'}
+                  </h3>
+                  <p className="text-gray-400 text-lg">
+                    {show && show.seasons.length > 0 ? show.seasons[0].name : 'Season 1'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Season Selector */}
       <div className="px-6 py-4">
