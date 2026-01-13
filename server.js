@@ -10,7 +10,11 @@ function getTimestamp() {
 
 const nextDev = spawn('next', ['dev'], {
   stdio: ['inherit', 'pipe', 'pipe'],
-  shell: true
+  shell: true,
+  env: {
+    ...process.env,
+    FORCE_COLOR: '1' // Force colored output even when piping
+  }
 });
 
 nextDev.stdout.on('data', (data) => {
