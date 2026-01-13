@@ -45,10 +45,76 @@ function WatchPageContent() {
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState<number>(-1);
   const [loading, setLoading] = useState(true);
   const [thumbnailError, setThumbnailError] = useState(false);
+  const [progressRestored, setProgressRestored] = useState(false);
 
   const videoUrl = searchParams.get('video');
   const subtitlesUrl = searchParams.get('subtitles');
   const title = searchParams.get('title') || 'Unknown';
+
+  // LocalStorage keys
+  const PROGRESS_KEY = 'video_progress';
+  const VOLUME_KEY = 'video_volume';
+
+  // Save video progress to localStorage
+  const saveProgress = (videoPath: string, currentTime: number, duration: number) => {
+    try {
+      // Don't save if we're near the end (95% or more watched)
+      if (currentTime / duration >= 0.95) {
+        localStorage.removeItem(PROGRESS_KEY);
+        return;
+      }
+
+      const progress = {
+        videoPath,
+        currentTime,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    } catch (error) {
+      console.error('Failed to save video progress:', error);
+    }
+  };
+
+  // Load video progress from localStorage
+  const loadProgress = (videoPath: string): number | null => {
+    try {
+      const saved = localStorage.getItem(PROGRESS_KEY);
+      if (!saved) return null;
+
+      const progress = JSON.parse(saved);
+
+      // Only restore if it's the same video
+      if (progress.videoPath === videoPath) {
+        return progress.currentTime;
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to load video progress:', error);
+      return null;
+    }
+  };
+
+  // Save volume to localStorage
+  const saveVolume = (volume: number) => {
+    try {
+      localStorage.setItem(VOLUME_KEY, volume.toString());
+    } catch (error) {
+      console.error('Failed to save volume:', error);
+    }
+  };
+
+  // Load volume from localStorage
+  const loadVolume = (): number | null => {
+    try {
+      const saved = localStorage.getItem(VOLUME_KEY);
+      if (!saved) return null;
+      const volume = parseFloat(saved);
+      return isNaN(volume) ? null : volume;
+    } catch (error) {
+      console.error('Failed to load volume:', error);
+      return null;
+    }
+  };
 
   // Helper function to parse video URL
   const parseVideoUrl = (url: string): ParsedVideoInfo | null => {
@@ -76,9 +142,7 @@ function WatchPageContent() {
 
   // Helper function to convert video path to thumbnail path
   const getThumbnailUrl = (videoPath: string): string => {
-    const thumbnailUrl = videoPath.replace(/\.(mp4|mkv|avi|mov)$/i, '.jpg');
-    console.log('Thumbnail URL:', thumbnailUrl);
-    return thumbnailUrl;
+    return videoPath.replace(/\.(mp4|mkv|avi|mov)$/i, '.jpg');
   };
 
   // Get next episode information
@@ -172,14 +236,20 @@ function WatchPageContent() {
 
     // Reset thumbnail error state when video changes
     setThumbnailError(false);
+    setProgressRestored(false);
     fetchShowData();
   }, [videoUrl]);
 
+  // Restore video progress and setup event listeners
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !videoUrl) return;
 
     const handleKeyPress = (e: KeyboardEvent) => {
+      // Make sure we have a valid video reference
+      const currentVideo = videoRef.current;
+      if (!currentVideo) return;
+
       // Prevent default behavior for all our shortcuts
       if (['Space', 'KeyM', 'KeyF', 'KeyC', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
         e.preventDefault();
@@ -187,42 +257,42 @@ function WatchPageContent() {
 
       switch (e.code) {
         case 'Space':
-          if (video.paused) {
-            video.play();
+          if (currentVideo.paused) {
+            currentVideo.play();
           } else {
-            video.pause();
+            currentVideo.pause();
           }
           break;
         case 'KeyM':
-          video.muted = !video.muted;
+          currentVideo.muted = !currentVideo.muted;
           break;
         case 'KeyF':
           if (!document.fullscreenElement) {
-            video.requestFullscreen();
+            currentVideo.requestFullscreen();
           } else {
             document.exitFullscreen();
           }
           break;
         case 'KeyC':
           // Toggle captions
-          if (video.textTracks.length > 0) {
-            const track = video.textTracks[0];
+          if (currentVideo.textTracks.length > 0) {
+            const track = currentVideo.textTracks[0];
             const newMode = track.mode === 'showing' ? 'hidden' : 'showing';
             track.mode = newMode;
             setCaptionsEnabled(newMode === 'showing');
           }
           break;
         case 'ArrowLeft':
-          video.currentTime = Math.max(0, video.currentTime - 5);
+          currentVideo.currentTime = Math.max(0, currentVideo.currentTime - 5);
           break;
         case 'ArrowRight':
-          video.currentTime = Math.min(video.duration, video.currentTime + 5);
+          currentVideo.currentTime = Math.min(currentVideo.duration, currentVideo.currentTime + 5);
           break;
         case 'ArrowUp':
-          video.volume = Math.min(1, video.volume + 0.1);
+          currentVideo.volume = Math.min(1, currentVideo.volume + 0.1);
           break;
         case 'ArrowDown':
-          video.volume = Math.max(0, video.volume - 0.1);
+          currentVideo.volume = Math.max(0, currentVideo.volume - 0.1);
           break;
       }
     };
@@ -239,16 +309,69 @@ function WatchPageContent() {
           }
         });
       }
+
+      // Restore saved volume
+      const savedVolume = loadVolume();
+      if (savedVolume !== null) {
+        video.volume = savedVolume;
+        console.log(`Restored volume: ${savedVolume}`);
+      }
+
+      // Restore saved progress
+      if (!progressRestored && videoUrl) {
+        const savedTime = loadProgress(videoUrl);
+        if (savedTime && savedTime > 0) {
+          video.currentTime = savedTime;
+          console.log(`Restored video progress: ${savedTime}s`);
+        }
+        setProgressRestored(true);
+      }
+    };
+
+    const handleTimeUpdate = () => {
+      // Save progress every few seconds
+      if (video.duration && videoUrl) {
+        saveProgress(videoUrl, video.currentTime, video.duration);
+      }
+    };
+
+    const handleEnded = () => {
+      // Clear progress when video finishes
+      if (videoUrl) {
+        localStorage.removeItem(PROGRESS_KEY);
+      }
+
+      // Autoplay next episode
+      const nextEp = getNextEpisode();
+      if (nextEp) {
+        const params = new URLSearchParams({
+          video: nextEp.episode.path,
+          title: `${nextEp.showName} - ${nextEp.seasonName} - ${nextEp.episode.name}`,
+          ...(nextEp.episode.subtitles ? { subtitles: nextEp.episode.subtitles } : {}),
+        });
+        router.push(`/watch?${params.toString()}`);
+      }
+    };
+
+    const handleVolumeChange = () => {
+      // Save volume whenever it changes
+      saveVolume(video.volume);
     };
 
     window.addEventListener('keydown', handleKeyPress);
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('ended', handleEnded);
+    video.addEventListener('volumechange', handleVolumeChange);
 
     return () => {
       window.removeEventListener('keydown', handleKeyPress);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('volumechange', handleVolumeChange);
     };
-  }, []);
+  }, [videoUrl, progressRestored, showData, currentSeasonIndex, currentEpisodeIndex, router]);
 
   if (!videoUrl) {
     return (
@@ -371,19 +494,19 @@ function WatchPageContent() {
             </p>
           </div>
 
-          <div className="mt-8 text-center">
-            <div className="bg-gray-900 rounded-lg p-6 max-w-2xl mx-auto">
-              <h3 className="text-lg font-semibold mb-4">Player Controls</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-300">
-                <div className="space-y-2">
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">Space</kbd> - Play/Pause</p>
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">F</kbd> - Fullscreen</p>
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">M</kbd> - Mute</p>
+          <div className="mt-6 text-center">
+            <div className="bg-gray-900 rounded-lg p-4 max-w-xl mx-auto">
+              <h3 className="text-base font-semibold mb-3">Player Controls</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-gray-300">
+                <div className="space-y-1.5">
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">Space</kbd> - Play/Pause</p>
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">F</kbd> - Fullscreen</p>
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">M</kbd> - Mute</p>
                 </div>
-                <div className="space-y-2">
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">←/→</kbd> - Skip 5s</p>
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">↑/↓</kbd> - Volume</p>
-                  <p><kbd className="bg-gray-700 px-2 py-1 rounded">C</kbd> - Toggle Captions</p>
+                <div className="space-y-1.5">
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">←/→</kbd> - Skip 5s</p>
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">↑/↓</kbd> - Volume</p>
+                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">C</kbd> - Toggle Captions</p>
                 </div>
               </div>
             </div>
@@ -391,14 +514,14 @@ function WatchPageContent() {
 
           {/* Next Episode Card */}
           {nextEpisodeInfo && (
-            <div className="mt-8">
+            <div className="mt-6">
               <div
                 onClick={handleNextEpisode}
-                className="bg-gray-900 rounded-lg overflow-hidden shadow-2xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:brightness-110 group"
+                className="bg-gray-900 rounded-lg overflow-hidden shadow-xl cursor-pointer transition-all duration-300 hover:scale-[1.01] hover:brightness-110 group max-w-3xl mx-auto"
               >
                 <div className="flex flex-col md:flex-row">
                   {/* Thumbnail */}
-                  <div className="md:w-2/5 flex-shrink-0">
+                  <div className="md:w-1/3 flex-shrink-0">
                     <div className="relative aspect-video bg-gray-800">
                       {!thumbnailError ? (
                         <img
@@ -406,17 +529,13 @@ function WatchPageContent() {
                           alt={`${nextEpisodeInfo.episode.name} thumbnail`}
                           className="w-full h-full object-cover"
                           loading="lazy"
-                          onLoad={() => {
-                            console.log('Thumbnail loaded successfully');
-                          }}
-                          onError={(e) => {
-                            console.error('Thumbnail failed to load:', e);
+                          onError={() => {
                             setThumbnailError(true);
                           }}
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-gray-600">
-                          <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                           </svg>
                         </div>
@@ -427,15 +546,15 @@ function WatchPageContent() {
                   </div>
 
                   {/* Content */}
-                  <div className="flex-1 p-6 md:p-8 flex items-center justify-between">
+                  <div className="flex-1 p-4 md:p-5 flex items-center justify-between">
                     <div className="flex flex-col justify-center">
                       {/* Episode Name */}
-                      <h3 className="text-2xl md:text-3xl font-bold mb-2 text-white group-hover:text-red-400 transition-colors">
+                      <h3 className="text-lg md:text-xl font-bold mb-1 text-white group-hover:text-red-400 transition-colors">
                         {nextEpisodeInfo.episode.name}
                       </h3>
 
                       {/* Season Info */}
-                      <p className="text-gray-400 text-lg">
+                      <p className="text-gray-400 text-sm">
                         {nextEpisodeInfo.showName} • {nextEpisodeInfo.seasonName}
                         {nextEpisodeInfo.isNextSeason && (
                           <span className="ml-2 text-red-500 font-semibold">New Season!</span>
