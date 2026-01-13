@@ -4,6 +4,12 @@ import type { NextRequest } from 'next/server';
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Log API requests with timestamp
+  if (pathname.startsWith('/api/')) {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] ${request.method} ${pathname}`);
+  }
+
   // Allow access to login page, auth API, and media files
   if (pathname === '/login' || pathname.startsWith('/api/auth') || pathname.startsWith('/api/media')) {
     return NextResponse.next();

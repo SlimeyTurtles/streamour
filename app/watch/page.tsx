@@ -51,6 +51,23 @@ function WatchPageContent() {
   const subtitlesUrl = searchParams.get('subtitles');
   const title = searchParams.get('title') || 'Unknown';
 
+  // Helper function to get video MIME type from URL
+  const getVideoMimeType = (url: string): string => {
+    const extension = url.split('.').pop()?.toLowerCase();
+    switch (extension) {
+      case 'mp4':
+        return 'video/mp4';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'mov':
+        return 'video/quicktime';
+      default:
+        return 'video/mp4';
+    }
+  };
+
   // LocalStorage keys
   const PROGRESS_KEY = 'video_progress';
   const VOLUME_KEY = 'video_volume';
@@ -434,9 +451,11 @@ function WatchPageContent() {
               controls
               className="w-full aspect-video"
               preload="metadata"
+              playsInline
+              crossOrigin="anonymous"
               key={videoUrl}
             >
-              <source src={videoUrl} type="video/mp4" />
+              <source src={videoUrl} type={getVideoMimeType(videoUrl)} />
               {subtitlesUrl && subtitlesUrl !== '' && (
                 <track
                   kind="subtitles"

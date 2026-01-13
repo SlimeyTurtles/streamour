@@ -77,6 +77,7 @@ export async function GET(
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Range',
+        'Cache-Control': 'public, max-age=3600',
       });
 
       return new NextResponse(buffer, {
@@ -92,6 +93,7 @@ export async function GET(
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Range',
+        'Cache-Control': 'public, max-age=3600',
       });
 
       if (contentType.startsWith('video/') || contentType.startsWith('audio/')) {
