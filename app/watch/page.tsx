@@ -558,34 +558,62 @@ function WatchPageContent() {
               onError={(e) => {
                 const video = e.currentTarget;
                 const error = video.error;
-                let errorMessage = 'Failed to load video.';
 
-                if (error) {
-                  switch (error.code) {
-                    case MediaError.MEDIA_ERR_ABORTED:
-                      errorMessage = 'Video playback was aborted.';
-                      break;
-                    case MediaError.MEDIA_ERR_NETWORK:
-                      errorMessage = 'A network error occurred while loading the video. Check your connection.';
-                      break;
-                    case MediaError.MEDIA_ERR_DECODE:
-                      errorMessage = 'The video codec is not supported by your browser. The video may use H.265/HEVC which requires H.264.';
-                      break;
-                    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                      errorMessage = 'The video source is not supported. This may be a codec or server issue.';
-                      break;
-                  }
-                  // Add error details for debugging
-                  errorMessage += ` (Code: ${error.code}, Message: ${error.message || 'none'})`;
+                // Log full error details
+                console.error('=== VIDEO PLAYBACK ERROR ===');
+                console.error('Video URL:', videoUrl);
+                console.error('Error object:', error);
+                console.error('Error code:', error?.code);
+                console.error('Error message:', error?.message);
+                console.error('Network state:', video.networkState);
+                console.error('Ready state:', video.readyState);
+                console.error('Current src:', video.currentSrc);
+                console.error('User Agent:', navigator.userAgent);
+                console.error('============================');
+
+                // Ignore if no actual error (can happen during navigation)
+                if (!error) {
+                  setVideoError('Unknown error occurred. Check browser console for details.');
+                  return;
                 }
-                console.error('Video error:', error);
+
+                let errorMessage = 'Failed to load video.';
+                const errorCodeNames: Record<number, string> = {
+                  1: 'MEDIA_ERR_ABORTED',
+                  2: 'MEDIA_ERR_NETWORK',
+                  3: 'MEDIA_ERR_DECODE',
+                  4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+                };
+
+                switch (error.code) {
+                  case MediaError.MEDIA_ERR_ABORTED:
+                    errorMessage = 'Video loading was aborted. This may be a server or connection issue.';
+                    break;
+                  case MediaError.MEDIA_ERR_NETWORK:
+                    errorMessage = 'Network error while loading video. Check your connection and server.';
+                    break;
+                  case MediaError.MEDIA_ERR_DECODE:
+                    errorMessage = 'Cannot decode video. The codec may not be supported (try H.264/AAC).';
+                    break;
+                  case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = 'Video source not supported. Check server response and video format.';
+                    break;
+                }
+
+                const codeName = errorCodeNames[error.code] || 'UNKNOWN';
+                errorMessage += ` [${codeName}]`;
+                if (error.message) {
+                  errorMessage += ` - ${error.message}`;
+                }
+
                 setVideoError(errorMessage);
               }}
               onLoadStart={() => setVideoError(null)}
             >
-              <source src={videoUrl} type={getVideoMimeType(videoUrl)} />
+              <source key={videoUrl} src={videoUrl} type={getVideoMimeType(videoUrl)} />
               {subtitlesUrl && subtitlesUrl !== '' && (
                 <track
+                  key={subtitlesUrl}
                   kind="subtitles"
                   src={subtitlesUrl}
                   srcLang="en"

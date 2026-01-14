@@ -61,82 +61,110 @@ export async function GET(
     const range = request.headers.get('range');
     const isVideo = contentType.startsWith('video/') || contentType.startsWith('audio/');
 
-    // For video files, always handle as streaming with range support
+    // For video files, handle streaming with range support
     if (isVideo) {
-      let start = 0;
-      let end = fileSize - 1;
-
+      // If range header present, handle partial content
       if (range) {
         const parts = range.replace(/bytes=/, '').split('-');
-        start = parseInt(parts[0], 10);
-        // If end is not specified or invalid, use a reasonable chunk size for mobile
-        // Mobile browsers work better with smaller chunks
+        const start = parseInt(parts[0], 10);
         const requestedEnd = parts[1] ? parseInt(parts[1], 10) : null;
 
-        // Limit chunk size to 1MB for better mobile compatibility
-        const maxChunkSize = 1024 * 1024; // 1MB
+        // Calculate end - if not specified, serve rest of file (let browser decide chunk size)
+        let end: number;
         if (requestedEnd !== null && !isNaN(requestedEnd)) {
           end = Math.min(requestedEnd, fileSize - 1);
         } else {
-          // If no end specified, serve a reasonable chunk
-          end = Math.min(start + maxChunkSize - 1, fileSize - 1);
+          end = fileSize - 1;
         }
 
         // Validate range
-        if (start >= fileSize || start < 0 || end >= fileSize || start > end) {
+        if (isNaN(start) || start >= fileSize || start < 0 || end >= fileSize || start > end) {
           return new NextResponse(null, {
             status: 416,
             headers: {
               'Content-Range': `bytes */${fileSize}`,
+              'Access-Control-Allow-Origin': '*',
             },
           });
         }
+
+        const chunkSize = end - start + 1;
+        const stream = createReadStream(filePath, { start, end });
+
+        const webStream = new ReadableStream({
+          start(controller) {
+            stream.on('data', (chunk) => {
+              if (Buffer.isBuffer(chunk)) {
+                controller.enqueue(new Uint8Array(chunk));
+              } else {
+                controller.enqueue(new TextEncoder().encode(chunk));
+              }
+            });
+            stream.on('end', () => {
+              controller.close();
+            });
+            stream.on('error', (err) => {
+              controller.error(err);
+            });
+          },
+          cancel() {
+            stream.destroy();
+          },
+        });
+
+        return new NextResponse(webStream, {
+          status: 206,
+          headers: {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunkSize.toString(),
+            'Content-Type': contentType,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range',
+            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        });
+      } else {
+        // No range header - serve full file with Accept-Ranges to indicate support
+        const stream = createReadStream(filePath);
+
+        const webStream = new ReadableStream({
+          start(controller) {
+            stream.on('data', (chunk) => {
+              if (Buffer.isBuffer(chunk)) {
+                controller.enqueue(new Uint8Array(chunk));
+              } else {
+                controller.enqueue(new TextEncoder().encode(chunk));
+              }
+            });
+            stream.on('end', () => {
+              controller.close();
+            });
+            stream.on('error', (err) => {
+              controller.error(err);
+            });
+          },
+          cancel() {
+            stream.destroy();
+          },
+        });
+
+        return new NextResponse(webStream, {
+          status: 200,
+          headers: {
+            'Accept-Ranges': 'bytes',
+            'Content-Length': fileSize.toString(),
+            'Content-Type': contentType,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range',
+            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        });
       }
-
-      const chunkSize = end - start + 1;
-
-      // Create a readable stream for the file chunk
-      const stream = createReadStream(filePath, { start, end });
-
-      // Convert Node.js stream to Web ReadableStream
-      const webStream = new ReadableStream({
-        start(controller) {
-          stream.on('data', (chunk) => {
-            if (Buffer.isBuffer(chunk)) {
-              controller.enqueue(new Uint8Array(chunk));
-            } else {
-              controller.enqueue(new TextEncoder().encode(chunk));
-            }
-          });
-          stream.on('end', () => {
-            controller.close();
-          });
-          stream.on('error', (err) => {
-            controller.error(err);
-          });
-        },
-        cancel() {
-          stream.destroy();
-        },
-      });
-
-      const headers = new Headers({
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize.toString(),
-        'Content-Type': contentType,
-        'Content-Disposition': 'inline',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Range',
-        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
-        'Cache-Control': 'public, max-age=3600',
-      });
-
-      return new NextResponse(webStream, {
-        status: range ? 206 : 200,
-        headers,
-      });
     } else {
       // For non-video files (images, subtitles), serve normally
       const fileBuffer = await fs.readFile(filePath);
