@@ -74,9 +74,11 @@ export async function GET(
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize.toString(),
         'Content-Type': contentType,
+        'Content-Disposition': 'inline',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Range',
+        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
         'Cache-Control': 'public, max-age=3600',
       });
 
@@ -93,11 +95,15 @@ export async function GET(
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Range',
+        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
         'Cache-Control': 'public, max-age=3600',
       });
 
+      // Always add Accept-Ranges for video/audio to help mobile browsers
       if (contentType.startsWith('video/') || contentType.startsWith('audio/')) {
         headers.set('Accept-Ranges', 'bytes');
+        // Prevent download prompt on mobile
+        headers.set('Content-Disposition', 'inline');
       }
 
       return new NextResponse(fileBuffer, {

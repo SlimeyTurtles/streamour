@@ -46,10 +46,47 @@ function WatchPageContent() {
   const [loading, setLoading] = useState(true);
   const [thumbnailError, setThumbnailError] = useState(false);
   const [progressRestored, setProgressRestored] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const videoUrl = searchParams.get('video');
   const subtitlesUrl = searchParams.get('subtitles');
   const title = searchParams.get('title') || 'Unknown';
+
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (window.innerWidth <= 768);
+      setIsMobile(mobile);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Check if video format is supported on mobile
+  const isFormatSupportedOnMobile = (url: string): boolean => {
+    const extension = url.split('.').pop()?.toLowerCase();
+    // Mobile browsers only reliably support MP4 (H.264) and WebM
+    return extension === 'mp4' || extension === 'webm';
+  };
+
+  // Get format warning message
+  const getFormatWarning = (url: string): string | null => {
+    if (!isMobile) return null;
+    const extension = url.split('.').pop()?.toLowerCase();
+    if (extension === 'mkv') {
+      return 'MKV format may not play on mobile browsers. If the video fails to load, try accessing from a desktop browser.';
+    }
+    if (extension === 'avi') {
+      return 'AVI format is not supported on mobile browsers. Please use a desktop browser to watch this video.';
+    }
+    if (extension === 'mov') {
+      return 'MOV format may not play on some mobile browsers. If playback fails, try a desktop browser.';
+    }
+    return null;
+  };
 
   // Helper function to get video MIME type from URL
   const getVideoMimeType = (url: string): string => {
@@ -490,6 +527,26 @@ function WatchPageContent() {
       <main className="px-8 py-8">
         <div className="max-w-6xl mx-auto">
           <div className="bg-black rounded-lg overflow-hidden shadow-2xl relative">
+            {/* Format warning for mobile */}
+            {videoUrl && getFormatWarning(videoUrl) && (
+              <div className="bg-yellow-900/90 text-yellow-200 px-4 py-3 text-sm">
+                <strong>Warning:</strong> {getFormatWarning(videoUrl)}
+              </div>
+            )}
+
+            {/* Video error message */}
+            {videoError && (
+              <div className="bg-red-900/90 text-red-200 px-4 py-4 text-center">
+                <p className="font-semibold mb-2">Video Playback Error</p>
+                <p className="text-sm">{videoError}</p>
+                {isMobile && (
+                  <p className="text-xs mt-2 text-red-300">
+                    Tip: Some video formats are not supported on mobile. Try using a desktop browser.
+                  </p>
+                )}
+              </div>
+            )}
+
             <video
               ref={videoRef}
               controls
@@ -498,6 +555,30 @@ function WatchPageContent() {
               playsInline
               crossOrigin="anonymous"
               key={videoUrl}
+              onError={(e) => {
+                const video = e.currentTarget;
+                const error = video.error;
+                let errorMessage = 'Failed to load video.';
+
+                if (error) {
+                  switch (error.code) {
+                    case MediaError.MEDIA_ERR_ABORTED:
+                      errorMessage = 'Video playback was aborted.';
+                      break;
+                    case MediaError.MEDIA_ERR_NETWORK:
+                      errorMessage = 'A network error occurred while loading the video.';
+                      break;
+                    case MediaError.MEDIA_ERR_DECODE:
+                      errorMessage = 'The video format is not supported by your browser.';
+                      break;
+                    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                      errorMessage = 'The video format is not supported. Try using a different browser or device.';
+                      break;
+                  }
+                }
+                setVideoError(errorMessage);
+              }}
+              onLoadStart={() => setVideoError(null)}
             >
               <source src={videoUrl} type={getVideoMimeType(videoUrl)} />
               {subtitlesUrl && subtitlesUrl !== '' && (
@@ -557,23 +638,26 @@ function WatchPageContent() {
             </p>
           </div>
 
-          <div className="mt-6 text-center">
-            <div className="bg-gray-900 rounded-lg p-4 max-w-xl mx-auto">
-              <h3 className="text-base font-semibold mb-3">Player Controls</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-gray-300">
-                <div className="space-y-1.5">
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">Space</kbd> - Play/Pause</p>
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">F</kbd> - Fullscreen</p>
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">M</kbd> - Mute</p>
-                </div>
-                <div className="space-y-1.5">
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">←/→</kbd> - Skip 5s</p>
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">↑/↓</kbd> - Volume</p>
-                  <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">C</kbd> - Toggle Captions</p>
+          {/* Only show keyboard shortcuts on desktop */}
+          {!isMobile && (
+            <div className="mt-6 text-center">
+              <div className="bg-gray-900 rounded-lg p-4 max-w-xl mx-auto">
+                <h3 className="text-base font-semibold mb-3">Player Controls</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-gray-300">
+                  <div className="space-y-1.5">
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">Space</kbd> - Play/Pause</p>
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">F</kbd> - Fullscreen</p>
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">M</kbd> - Mute</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">←/→</kbd> - Skip 5s</p>
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">↑/↓</kbd> - Volume</p>
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">C</kbd> - Toggle Captions</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Next Episode Card */}
           {nextEpisodeInfo && (
