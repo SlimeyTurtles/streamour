@@ -553,7 +553,7 @@ function WatchPageContent() {
               className="w-full aspect-video"
               preload="metadata"
               playsInline
-              crossOrigin="anonymous"
+              {...(subtitlesUrl ? { crossOrigin: "anonymous" } : {})}
               key={videoUrl}
               onError={(e) => {
                 const video = e.currentTarget;
@@ -566,16 +566,19 @@ function WatchPageContent() {
                       errorMessage = 'Video playback was aborted.';
                       break;
                     case MediaError.MEDIA_ERR_NETWORK:
-                      errorMessage = 'A network error occurred while loading the video.';
+                      errorMessage = 'A network error occurred while loading the video. Check your connection.';
                       break;
                     case MediaError.MEDIA_ERR_DECODE:
-                      errorMessage = 'The video format is not supported by your browser.';
+                      errorMessage = 'The video codec is not supported by your browser. The video may use H.265/HEVC which requires H.264.';
                       break;
                     case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                      errorMessage = 'The video format is not supported. Try using a different browser or device.';
+                      errorMessage = 'The video source is not supported. This may be a codec or server issue.';
                       break;
                   }
+                  // Add error details for debugging
+                  errorMessage += ` (Code: ${error.code}, Message: ${error.message || 'none'})`;
                 }
+                console.error('Video error:', error);
                 setVideoError(errorMessage);
               }}
               onLoadStart={() => setVideoError(null)}
