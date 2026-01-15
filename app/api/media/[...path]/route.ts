@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
 import path from 'path';
 
 export async function OPTIONS() {
@@ -8,10 +7,52 @@ export async function OPTIONS() {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': 'Range',
     },
   });
+}
+
+export async function HEAD(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  // Handle HEAD requests for Safari compatibility
+  const { path: pathSegments } = await params;
+  const filePath = path.join(process.cwd(), 'media', ...pathSegments.map(decodeURIComponent));
+
+  try {
+    const stat = await fs.stat(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = getContentType(ext);
+
+    return new NextResponse(null, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': stat.size.toString(),
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  } catch {
+    return new NextResponse(null, { status: 404 });
+  }
+}
+
+function getContentType(ext: string): string {
+  switch (ext) {
+    case '.mp4': return 'video/mp4';
+    case '.mkv': return 'video/x-matroska';
+    case '.avi': return 'video/x-msvideo';
+    case '.mov': return 'video/quicktime';
+    case '.webm': return 'video/webm';
+    case '.vtt': return 'text/vtt; charset=utf-8';
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    default: return 'application/octet-stream';
+  }
 }
 
 export async function GET(
@@ -22,173 +63,120 @@ export async function GET(
     const { path: pathSegments } = await params;
     const filePath = path.join(process.cwd(), 'media', ...pathSegments.map(decodeURIComponent));
 
+    // Check file exists
+    let stat;
     try {
-      await fs.access(filePath);
+      stat = await fs.stat(filePath);
     } catch {
-      return NextResponse.json(
-        { error: 'File not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    const stat = await fs.stat(filePath);
     if (!stat.isFile()) {
-      return NextResponse.json(
-        { error: 'Not a file' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Not a file' }, { status: 400 });
     }
 
     const fileSize = stat.size;
-    const fileName = path.basename(filePath);
-    const ext = path.extname(fileName).toLowerCase();
-
-    let contentType = 'application/octet-stream';
-    if (ext === '.mp4') {
-      contentType = 'video/mp4';
-    } else if (ext === '.mkv') {
-      contentType = 'video/x-matroska';
-    } else if (ext === '.avi') {
-      contentType = 'video/x-msvideo';
-    } else if (ext === '.mov') {
-      contentType = 'video/quicktime';
-    } else if (ext === '.vtt') {
-      contentType = 'text/vtt; charset=utf-8';
-    } else if (['.png', '.jpg', '.jpeg'].includes(ext)) {
-      contentType = `image/${ext === '.jpg' ? 'jpeg' : ext.slice(1)}`;
-    }
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = getContentType(ext);
+    const isMedia = contentType.startsWith('video/') || contentType.startsWith('audio/');
 
     const range = request.headers.get('range');
-    const isVideo = contentType.startsWith('video/') || contentType.startsWith('audio/');
 
-    // For video files, handle streaming with range support
-    if (isVideo) {
-      // If range header present, handle partial content
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const requestedEnd = parts[1] ? parseInt(parts[1], 10) : null;
-
-        // Calculate end - if not specified, serve rest of file (let browser decide chunk size)
-        let end: number;
-        if (requestedEnd !== null && !isNaN(requestedEnd)) {
-          end = Math.min(requestedEnd, fileSize - 1);
-        } else {
-          end = fileSize - 1;
-        }
-
-        // Validate range
-        if (isNaN(start) || start >= fileSize || start < 0 || end >= fileSize || start > end) {
-          return new NextResponse(null, {
-            status: 416,
-            headers: {
-              'Content-Range': `bytes */${fileSize}`,
-              'Access-Control-Allow-Origin': '*',
-            },
-          });
-        }
-
-        const chunkSize = end - start + 1;
-        const stream = createReadStream(filePath, { start, end });
-
-        const webStream = new ReadableStream({
-          start(controller) {
-            stream.on('data', (chunk) => {
-              if (Buffer.isBuffer(chunk)) {
-                controller.enqueue(new Uint8Array(chunk));
-              } else {
-                controller.enqueue(new TextEncoder().encode(chunk));
-              }
-            });
-            stream.on('end', () => {
-              controller.close();
-            });
-            stream.on('error', (err) => {
-              controller.error(err);
-            });
-          },
-          cancel() {
-            stream.destroy();
-          },
+    if (isMedia && range) {
+      // Parse range header
+      const match = range.match(/bytes=(\d+)-(\d*)/);
+      if (!match) {
+        return new NextResponse(null, {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${fileSize}` },
         });
+      }
 
-        return new NextResponse(webStream, {
-          status: 206,
-          headers: {
-            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunkSize.toString(),
-            'Content-Type': contentType,
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Range',
-            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
-            'Cache-Control': 'public, max-age=3600',
-          },
+      const start = parseInt(match[1], 10);
+      const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+      // Validate range
+      if (start >= fileSize || end >= fileSize || start > end) {
+        return new NextResponse(null, {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${fileSize}` },
         });
-      } else {
-        // No range header - serve full file with Accept-Ranges to indicate support
-        const stream = createReadStream(filePath);
+      }
 
-        const webStream = new ReadableStream({
-          start(controller) {
-            stream.on('data', (chunk) => {
-              if (Buffer.isBuffer(chunk)) {
-                controller.enqueue(new Uint8Array(chunk));
-              } else {
-                controller.enqueue(new TextEncoder().encode(chunk));
-              }
-            });
-            stream.on('end', () => {
-              controller.close();
-            });
-            stream.on('error', (err) => {
-              controller.error(err);
-            });
-          },
-          cancel() {
-            stream.destroy();
-          },
-        });
+      const chunkSize = end - start + 1;
 
-        return new NextResponse(webStream, {
+      // Read the specific chunk
+      const fileHandle = await fs.open(filePath, 'r');
+      const buffer = Buffer.alloc(chunkSize);
+      await fileHandle.read(buffer, 0, chunkSize, start);
+      await fileHandle.close();
+
+      return new NextResponse(buffer, {
+        status: 206,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': chunkSize.toString(),
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    } else if (isMedia) {
+      // No range header - send first 1MB chunk to trigger browser to use range requests
+      // This avoids loading huge files into memory
+      const initialChunkSize = Math.min(1024 * 1024, fileSize); // 1MB or file size
+
+      const fileHandle = await fs.open(filePath, 'r');
+      const buffer = Buffer.alloc(initialChunkSize);
+      await fileHandle.read(buffer, 0, initialChunkSize, 0);
+      await fileHandle.close();
+
+      // If file is small enough, send it all with 200
+      if (fileSize <= initialChunkSize) {
+        return new NextResponse(buffer, {
           status: 200,
           headers: {
-            'Accept-Ranges': 'bytes',
-            'Content-Length': fileSize.toString(),
             'Content-Type': contentType,
+            'Content-Length': fileSize.toString(),
+            'Accept-Ranges': 'bytes',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Range',
             'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
             'Cache-Control': 'public, max-age=3600',
           },
         });
       }
-    } else {
-      // For non-video files (images, subtitles), serve normally
-      const fileBuffer = await fs.readFile(filePath);
 
-      const headers = new Headers({
-        'Content-Type': contentType,
-        'Content-Length': fileSize.toString(),
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Range',
-        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
-        'Cache-Control': 'public, max-age=3600',
+      // For large files, send partial with 206 to encourage range requests
+      return new NextResponse(buffer, {
+        status: 206,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': initialChunkSize.toString(),
+          'Content-Range': `bytes 0-${initialChunkSize - 1}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+          'Cache-Control': 'public, max-age=3600',
+        },
       });
+    } else {
+      // Non-media files (images, subtitles)
+      const fileBuffer = await fs.readFile(filePath);
 
       return new NextResponse(fileBuffer, {
         status: 200,
-        headers,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': fileSize.toString(),
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=3600',
+        },
       });
     }
   } catch (error) {
     console.error('Error serving media file:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
