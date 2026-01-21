@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 
+function getMediaDir(): string {
+  const mediaDir = process.env.MEDIA_DIR || 'media';
+  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
+}
+
 export interface Show {
   id: string;
   name: string;
@@ -21,7 +26,7 @@ export interface Episode {
 }
 
 async function scanMediaFolder(): Promise<Show[]> {
-  const mediaPath = path.join(process.cwd(), 'media');
+  const mediaPath = getMediaDir();
   
   try {
     await fs.access(mediaPath);

@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 
+function getMediaDir(): string {
+  const mediaDir = process.env.MEDIA_DIR || 'media';
+  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
+}
+
 // Debug endpoint to test video serving
 // Access at: /api/test-video
 // Or with file: /api/test-video?file=Rick%20and%20Morty/Season%201/01%20-%20Pilot.mp4
@@ -30,7 +35,7 @@ export async function GET(request: NextRequest) {
   };
 
   if (file) {
-    const filePath = path.join(process.cwd(), 'media', ...file.split('/').map(decodeURIComponent));
+    const filePath = path.join(getMediaDir(), ...file.split('/').map(decodeURIComponent));
 
     try {
       const stat = await fs.stat(filePath);
