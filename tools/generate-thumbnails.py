@@ -2,7 +2,11 @@
 
 """
 Auto-generate thumbnails for video files using FFmpeg
-Usage: python3 generate-thumbnails.py
+Usage: python3 generate-thumbnails.py [directory]
+
+Examples:
+  python3 generate-thumbnails.py           # Uses 'media' directory (default)
+  python3 generate-thumbnails.py /videos   # Uses '/videos' directory
 
 This will extract a frame from each video (at 10% duration) and save it as a thumbnail.
 """
@@ -70,7 +74,7 @@ def generate_thumbnail(video_path, timestamp=None):
         '-ss', str(timestamp),  # Seek to timestamp
         '-i', str(video_path),   # Input file
         '-vframes', '1',         # Extract 1 frame
-        '-vf', 'scale=480:-1',   # Scale to 480px width, maintain aspect ratio
+        '-vf', 'scale=1280:-1',  # Scale to 1280px width, maintain aspect ratio
         '-q:v', '2',             # High quality (2-5 is good, lower is better)
         '-y',                    # Overwrite output file
         str(thumbnail_path)
@@ -108,9 +112,16 @@ def main():
     if not check_dependencies():
         sys.exit(1)
 
+    # Get media directory from command line or use default
+    media_dir = sys.argv[1] if len(sys.argv) > 1 else "media"
+
+    if not os.path.isdir(media_dir):
+        print(f"\n❌ Error: Directory '{media_dir}' does not exist")
+        sys.exit(1)
+
     # Find videos
-    print(f"\n🔍 Scanning for videos without thumbnails...")
-    videos = find_videos_without_thumbnails()
+    print(f"\n🔍 Scanning '{media_dir}' for videos without thumbnails...")
+    videos = find_videos_without_thumbnails(media_dir)
 
     if not videos:
         print("\n✅ All videos already have thumbnails!")
