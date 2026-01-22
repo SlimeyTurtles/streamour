@@ -65,44 +65,10 @@ function WatchPageContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Check if video format is supported on mobile
-  const isFormatSupportedOnMobile = (url: string): boolean => {
-    const extension = url.split('.').pop()?.toLowerCase();
-    // Mobile browsers only reliably support MP4 (H.264) and WebM
-    return extension === 'mp4' || extension === 'webm';
-  };
-
-  // Get format warning message
-  const getFormatWarning = (url: string): string | null => {
-    if (!isMobile) return null;
-    const extension = url.split('.').pop()?.toLowerCase();
-    if (extension === 'mkv') {
-      return 'MKV format may not play on mobile browsers. If the video fails to load, try accessing from a desktop browser.';
-    }
-    if (extension === 'avi') {
-      return 'AVI format is not supported on mobile browsers. Please use a desktop browser to watch this video.';
-    }
-    if (extension === 'mov') {
-      return 'MOV format may not play on some mobile browsers. If playback fails, try a desktop browser.';
-    }
-    return null;
-  };
-
   // Helper function to get video MIME type from URL
+  // MKV files are remuxed to MP4 on the server, so always return video/mp4
   const getVideoMimeType = (url: string): string => {
-    const extension = url.split('.').pop()?.toLowerCase();
-    switch (extension) {
-      case 'mp4':
-        return 'video/mp4';
-      case 'mkv':
-        return 'video/x-matroska';
-      case 'avi':
-        return 'video/x-msvideo';
-      case 'mov':
-        return 'video/quicktime';
-      default:
-        return 'video/mp4';
-    }
+    return 'video/mp4';
   };
 
   // LocalStorage keys
@@ -217,14 +183,14 @@ function WatchPageContent() {
   // Helper function to parse video URL
   const parseVideoUrl = (url: string): ParsedVideoInfo | null => {
     try {
-      // URL format: /api/media/Solar%20Opposites/Season%203/01%20-%20The%20...mp4
+      // URL format: /api/media/Solar%20Opposites/Season%203/01%20-%20The%20...mkv
       const parts = url.split('/');
       if (parts.length < 5) return null;
 
       const showName = decodeURIComponent(parts[3]);
       const seasonName = decodeURIComponent(parts[4]);
       const episodeFileName = decodeURIComponent(parts[5]);
-      const episodeName = episodeFileName.replace(/\.(mp4|mkv|avi|mov)$/i, '');
+      const episodeName = episodeFileName.replace(/\.mkv$/i, '');
 
       return { showName, seasonName, episodeName };
     } catch (error) {
@@ -240,7 +206,7 @@ function WatchPageContent() {
 
   // Helper function to convert video path to thumbnail path
   const getThumbnailUrl = (videoPath: string): string => {
-    return videoPath.replace(/\.(mp4|mkv|avi|mov)$/i, '.jpg');
+    return videoPath.replace(/\.mkv$/i, '.jpg');
   };
 
   // Get next episode information
@@ -527,23 +493,11 @@ function WatchPageContent() {
       <main className="px-8 py-8">
         <div className="max-w-6xl mx-auto">
           <div className="bg-black rounded-lg overflow-hidden shadow-2xl relative">
-            {/* Format warning for mobile */}
-            {videoUrl && getFormatWarning(videoUrl) && (
-              <div className="bg-yellow-900/90 text-yellow-200 px-4 py-3 text-sm">
-                <strong>Warning:</strong> {getFormatWarning(videoUrl)}
-              </div>
-            )}
-
             {/* Video error message */}
             {videoError && (
               <div className="bg-red-900/90 text-red-200 px-4 py-4 text-center">
                 <p className="font-semibold mb-2">Video Playback Error</p>
                 <p className="text-sm">{videoError}</p>
-                {isMobile && (
-                  <p className="text-xs mt-2 text-red-300">
-                    Tip: Some video formats are not supported on mobile. Try using a desktop browser.
-                  </p>
-                )}
               </div>
             )}
 
