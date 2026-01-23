@@ -2,6 +2,7 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useRef, useEffect, useState } from 'react';
+import Hls from 'hls.js';
 
 // TypeScript interfaces for show data
 interface Episode {
@@ -39,6 +40,8 @@ function WatchPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const originalCueTimes = useRef<Map<VTTCue, { start: number; end: number }>>(new Map());
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [showData, setShowData] = useState<Show | null>(null);
   const [currentSeasonIndex, setCurrentSeasonIndex] = useState<number>(-1);
@@ -48,10 +51,180 @@ function WatchPageContent() {
   const [progressRestored, setProgressRestored] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [subtitlePosition, setSubtitlePosition] = useState<'top' | 'middle' | 'bottom'>('bottom');
+  const [subtitleSync, setSubtitleSync] = useState<number>(0); // Sync offset in seconds
+  const [showSubtitleSettings, setShowSubtitleSettings] = useState(false);
+  const [hlsLoading, setHlsLoading] = useState(false);
+  const [transcodeProgress, setTranscodeProgress] = useState<number | null>(null);
+  const progressPollRef = useRef<NodeJS.Timeout | null>(null);
 
   const videoUrl = searchParams.get('video');
   const subtitlesUrl = searchParams.get('subtitles');
   const title = searchParams.get('title') || 'Unknown';
+
+  // Convert video URL to HLS URL for MKV files
+  const getHlsUrl = (url: string): string | null => {
+    if (!url.includes('.mkv')) return null;
+    // Convert /api/media/Show/Season/file.mkv to /api/hls/Show/Season/file.mkv/playlist.m3u8
+    const hlsPath = url.replace('/api/media/', '/api/hls/') + '/playlist.m3u8';
+    return hlsPath;
+  };
+
+  // Get progress URL for transcoding status
+  const getProgressUrl = (url: string): string | null => {
+    if (!url.includes('.mkv')) return null;
+    return url.replace('/api/media/', '/api/hls/') + '/progress';
+  };
+
+  // Poll for transcoding progress
+  const startProgressPolling = (url: string) => {
+    const progressUrl = getProgressUrl(url);
+    if (!progressUrl) return;
+
+    // Clear any existing poll
+    if (progressPollRef.current) {
+      clearInterval(progressPollRef.current);
+    }
+
+    const poll = async () => {
+      try {
+        const res = await fetch(progressUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'ready') {
+            setTranscodeProgress(100);
+            if (progressPollRef.current) {
+              clearInterval(progressPollRef.current);
+              progressPollRef.current = null;
+            }
+          } else if (data.status === 'transcoding') {
+            setTranscodeProgress(data.progress);
+          } else {
+            setTranscodeProgress(0);
+          }
+        }
+      } catch (e) {
+        console.error('Progress poll error:', e);
+      }
+    };
+
+    // Poll immediately, then every 2 seconds
+    poll();
+    progressPollRef.current = setInterval(poll, 2000);
+  };
+
+  const stopProgressPolling = () => {
+    if (progressPollRef.current) {
+      clearInterval(progressPollRef.current);
+      progressPollRef.current = null;
+    }
+    setTranscodeProgress(null);
+  };
+
+  // Setup HLS playback for MKV files
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    // Always cleanup first when video URL changes
+    if (hlsRef.current) {
+      console.log('Cleaning up previous HLS instance');
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    // Stop any existing progress polling
+    stopProgressPolling();
+
+    // Clear video source to ensure clean state
+    video.removeAttribute('src');
+    video.load();
+    setVideoError(null);
+
+    const hlsUrl = getHlsUrl(videoUrl);
+
+    // If not an MKV file, use direct playback
+    if (!hlsUrl) {
+      video.src = videoUrl;
+      return;
+    }
+
+    // Start progress polling for MKV files
+    setHlsLoading(true);
+    startProgressPolling(videoUrl);
+
+    // Check if browser supports HLS natively (Safari)
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      console.log('Using native HLS support');
+      video.src = hlsUrl;
+      video.addEventListener('loadedmetadata', () => {
+        setHlsLoading(false);
+        stopProgressPolling();
+      }, { once: true });
+      video.addEventListener('error', () => {
+        setHlsLoading(false);
+        stopProgressPolling();
+      }, { once: true });
+      return;
+    }
+
+    // Use hls.js for other browsers
+    if (Hls.isSupported()) {
+      console.log('Using hls.js for HLS playback:', hlsUrl);
+
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 90,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+      });
+
+      hlsRef.current = hls;
+
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('HLS manifest parsed, ready to play');
+        setHlsLoading(false);
+        stopProgressPolling();
+        setVideoError(null);
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('HLS error:', data);
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.log('Network error, trying to recover...');
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log('Media error, trying to recover...');
+              hls.recoverMediaError();
+              break;
+            default:
+              setHlsLoading(false);
+              stopProgressPolling();
+              setVideoError(`HLS Error: ${data.details}`);
+              hls.destroy();
+              hlsRef.current = null;
+              break;
+          }
+        }
+      });
+
+      return () => {
+        console.log('Cleanup: destroying HLS instance');
+        stopProgressPolling();
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    } else {
+      setVideoError('Your browser does not support HLS video playback');
+    }
+  }, [videoUrl]);
 
   // Detect mobile device
   useEffect(() => {
@@ -75,6 +248,73 @@ function WatchPageContent() {
   const PROGRESS_KEY = 'video_progress';
   const VOLUME_KEY = 'video_volume';
   const RECENTLY_PLAYED_KEY = 'recently_played';
+  const SUBTITLE_POSITION_KEY = 'subtitle_position';
+  const SUBTITLE_SYNC_KEY = 'subtitle_sync';
+
+  // Load subtitle settings on mount
+  useEffect(() => {
+    try {
+      const savedPosition = localStorage.getItem(SUBTITLE_POSITION_KEY);
+      if (savedPosition && ['top', 'middle', 'bottom'].includes(savedPosition)) {
+        setSubtitlePosition(savedPosition as 'top' | 'middle' | 'bottom');
+      }
+      const savedSync = localStorage.getItem(SUBTITLE_SYNC_KEY);
+      if (savedSync) {
+        const syncValue = parseFloat(savedSync);
+        if (!isNaN(syncValue)) {
+          setSubtitleSync(syncValue);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load subtitle settings:', error);
+    }
+  }, []);
+
+  // Save subtitle settings
+  const saveSubtitlePosition = (position: 'top' | 'middle' | 'bottom') => {
+    setSubtitlePosition(position);
+    try {
+      localStorage.setItem(SUBTITLE_POSITION_KEY, position);
+    } catch (error) {
+      console.error('Failed to save subtitle position:', error);
+    }
+  };
+
+  const saveSubtitleSync = (sync: number) => {
+    setSubtitleSync(sync);
+    try {
+      localStorage.setItem(SUBTITLE_SYNC_KEY, sync.toString());
+    } catch (error) {
+      console.error('Failed to save subtitle sync:', error);
+    }
+  };
+
+  // Apply subtitle sync offset to cues
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || video.textTracks.length === 0) return;
+
+    const track = video.textTracks[0];
+    if (!track.cues) return;
+
+    const cues = track.cues;
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i] as VTTCue;
+
+      // Store original times if not already stored
+      if (!originalCueTimes.current.has(cue)) {
+        originalCueTimes.current.set(cue, {
+          start: cue.startTime,
+          end: cue.endTime,
+        });
+      }
+
+      // Apply sync offset
+      const original = originalCueTimes.current.get(cue)!;
+      cue.startTime = Math.max(0, original.start + subtitleSync);
+      cue.endTime = Math.max(0, original.end + subtitleSync);
+    }
+  }, [subtitleSync]);
 
   // Save recently played show to localStorage
   const saveRecentlyPlayed = (videoPath: string, currentTime: number, duration: number) => {
@@ -315,7 +555,7 @@ function WatchPageContent() {
       if (!currentVideo) return;
 
       // Prevent default behavior for all our shortcuts
-      if (['Space', 'KeyM', 'KeyF', 'KeyC', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+      if (['Space', 'KeyM', 'KeyF', 'KeyC', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Comma', 'Period'].includes(e.code)) {
         e.preventDefault();
       }
 
@@ -357,6 +597,14 @@ function WatchPageContent() {
           break;
         case 'ArrowDown':
           currentVideo.volume = Math.max(0, currentVideo.volume - 0.1);
+          break;
+        case 'Comma':
+          // Subtitle sync: earlier (subtitles appear sooner)
+          saveSubtitleSync(Math.max(-10, subtitleSync - 0.1));
+          break;
+        case 'Period':
+          // Subtitle sync: later (subtitles appear later)
+          saveSubtitleSync(Math.min(10, subtitleSync + 0.1));
           break;
       }
     };
@@ -435,7 +683,7 @@ function WatchPageContent() {
       video.removeEventListener('ended', handleEnded);
       video.removeEventListener('volumechange', handleVolumeChange);
     };
-  }, [videoUrl, progressRestored, showData, currentSeasonIndex, currentEpisodeIndex, router]);
+  }, [videoUrl, progressRestored, showData, currentSeasonIndex, currentEpisodeIndex, router, subtitleSync]);
 
   if (!videoUrl) {
     return (
@@ -493,6 +741,18 @@ function WatchPageContent() {
       <main className="px-8 py-8">
         <div className="max-w-6xl mx-auto">
           <div className="bg-black rounded-lg overflow-hidden shadow-2xl relative">
+            {/* Subtitle styles */}
+            <style>{`
+              video::cue {
+                background-color: rgba(0, 0, 0, 0.8);
+                color: white;
+                font-size: 1.2em;
+                line-height: 1.4;
+                padding: 0.2em 0.4em;
+                border-radius: 4px;
+              }
+            `}</style>
+
             {/* Video error message */}
             {videoError && (
               <div className="bg-red-900/90 text-red-200 px-4 py-4 text-center">
@@ -501,10 +761,11 @@ function WatchPageContent() {
               </div>
             )}
 
-            <video
-              ref={videoRef}
-              controls
-              className="w-full aspect-video"
+            <div className="relative">
+              <video
+                ref={videoRef}
+                controls
+                className="w-full aspect-video"
               preload="metadata"
               playsInline
               {...(subtitlesUrl ? { crossOrigin: "anonymous" } : {})}
@@ -564,7 +825,10 @@ function WatchPageContent() {
               }}
               onLoadStart={() => setVideoError(null)}
             >
-              <source key={videoUrl} src={videoUrl} type={getVideoMimeType(videoUrl)} />
+              {/* Only use source element for non-MKV files; HLS sets src directly */}
+              {videoUrl && !videoUrl.includes('.mkv') && (
+                <source key={videoUrl} src={videoUrl} type={getVideoMimeType(videoUrl)} />
+              )}
               {subtitlesUrl && subtitlesUrl !== '' && (
                 <track
                   key={subtitlesUrl}
@@ -575,11 +839,48 @@ function WatchPageContent() {
                 />
               )}
               Your browser does not support the video tag.
-            </video>
+              </video>
 
-            {/* Manual CC Toggle Button */}
+              {/* HLS Loading indicator with progress */}
+              {hlsLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                  <div className="text-white text-center w-80">
+                    <svg className="animate-spin h-10 w-10 mx-auto mb-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <p className="text-lg font-semibold mb-2">
+                      {transcodeProgress !== null && transcodeProgress < 100
+                        ? 'Transcoding video...'
+                        : 'Preparing video...'}
+                    </p>
+
+                    {/* Progress bar */}
+                    {transcodeProgress !== null && transcodeProgress < 100 && (
+                      <div className="mb-3">
+                        <div className="w-full bg-gray-700 rounded-full h-2.5 mb-2">
+                          <div
+                            className="bg-red-600 h-2.5 rounded-full transition-all duration-500"
+                            style={{ width: `${transcodeProgress}%` }}
+                          />
+                        </div>
+                        <p className="text-sm text-gray-300">{transcodeProgress}% complete</p>
+                      </div>
+                    )}
+
+                    <p className="text-sm text-gray-400">
+                      {transcodeProgress !== null && transcodeProgress < 100
+                        ? 'Converting video for browser playback'
+                        : 'First-time playback may take a few minutes to transcode'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Manual CC Toggle Button and Subtitle Settings */}
             {subtitlesUrl && subtitlesUrl !== '' && (
-              <div className="absolute bottom-20 right-4">
+              <div className="absolute bottom-20 right-4 flex gap-2">
                 <button
                   onClick={() => {
                     const video = videoRef.current;
@@ -603,11 +904,82 @@ function WatchPageContent() {
                 >
                   CC
                 </button>
+                <button
+                  onClick={() => setShowSubtitleSettings(!showSubtitleSettings)}
+                  className={`${
+                    showSubtitleSettings
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-gray-800/90 hover:bg-gray-700'
+                  } text-white px-3 py-2 rounded-lg transition-colors shadow-lg`}
+                  title="Subtitle Settings"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
+            {/* Subtitle Settings Panel */}
+            {showSubtitleSettings && subtitlesUrl && (
+              <div className="absolute bottom-32 right-4 bg-gray-900/95 rounded-lg p-4 shadow-xl min-w-64 backdrop-blur-sm border border-gray-700">
+                <h4 className="text-white font-semibold mb-3 text-sm">Subtitle Settings</h4>
+
+                {/* Position Controls */}
+                <div className="mb-4">
+                  <label className="text-gray-400 text-xs block mb-2">Position</label>
+                  <div className="flex gap-1">
+                    {(['top', 'middle', 'bottom'] as const).map((pos) => (
+                      <button
+                        key={pos}
+                        onClick={() => saveSubtitlePosition(pos)}
+                        className={`flex-1 px-3 py-1.5 text-xs rounded capitalize ${
+                          subtitlePosition === pos
+                            ? 'bg-red-600 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                      >
+                        {pos}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sync Controls */}
+                <div>
+                  <label className="text-gray-400 text-xs block mb-2">
+                    Sync Offset: <span className="text-white font-mono">{subtitleSync >= 0 ? '+' : ''}{subtitleSync.toFixed(1)}s</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => saveSubtitleSync(Math.max(-10, subtitleSync - 0.5))}
+                      className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+                    >
+                      -0.5s
+                    </button>
+                    <button
+                      onClick={() => saveSubtitleSync(0)}
+                      className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      onClick={() => saveSubtitleSync(Math.min(10, subtitleSync + 0.5))}
+                      className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+                    >
+                      +0.5s
+                    </button>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-2">
+                    {subtitleSync > 0 ? 'Subtitles appear later' : subtitleSync < 0 ? 'Subtitles appear earlier' : 'No offset'}
+                  </p>
+                </div>
               </div>
             )}
           </div>
 
-          <div className="mt-8 text-center text-gray-400">
+          <div className="mt-4 text-center text-gray-400">
             <p className="text-sm">
               {subtitlesUrl && subtitlesUrl !== '' ? (
                 <span className={`px-3 py-1 rounded-full ${
@@ -626,9 +998,9 @@ function WatchPageContent() {
           {/* Only show keyboard shortcuts on desktop */}
           {!isMobile && (
             <div className="mt-6 text-center">
-              <div className="bg-gray-900 rounded-lg p-4 max-w-xl mx-auto">
+              <div className="bg-gray-900 rounded-lg p-4 max-w-2xl mx-auto">
                 <h3 className="text-base font-semibold mb-3">Player Controls</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-gray-300">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-gray-300">
                   <div className="space-y-1.5">
                     <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">Space</kbd> - Play/Pause</p>
                     <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">F</kbd> - Fullscreen</p>
@@ -638,6 +1010,11 @@ function WatchPageContent() {
                     <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">←/→</kbd> - Skip 5s</p>
                     <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">↑/↓</kbd> - Volume</p>
                     <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">C</kbd> - Toggle Captions</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">,</kbd> - Subs earlier</p>
+                    <p><kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-xs">.</kbd> - Subs later</p>
+                    <p className="text-gray-500">Sync: {subtitleSync >= 0 ? '+' : ''}{subtitleSync.toFixed(1)}s</p>
                   </div>
                 </div>
               </div>

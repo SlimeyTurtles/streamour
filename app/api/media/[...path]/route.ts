@@ -82,14 +82,29 @@ export async function HEAD(
     // For MKV files, report as MP4 since we remux on-the-fly
     const contentType = ext === '.mkv' ? 'video/mp4' : getContentType(ext);
 
+    const headers: Record<string, string> = {
+      'Content-Type': contentType,
+      'Content-Length': stat.size.toString(),
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'X-Content-Duration',
+    };
+
+    // Get duration for MKV files
+    if (ext === '.mkv') {
+      try {
+        const duration = await getVideoDuration(filePath);
+        if (duration > 0) {
+          headers['X-Content-Duration'] = duration.toString();
+        }
+      } catch (err) {
+        console.error('Failed to get duration for HEAD request:', err);
+      }
+    }
+
     return new NextResponse(null, {
       status: 200,
-      headers: {
-        'Content-Type': contentType,
-        'Content-Length': stat.size.toString(),
-        'Accept-Ranges': 'bytes',
-        'Access-Control-Allow-Origin': '*',
-      },
+      headers,
     });
   } catch {
     return new NextResponse(null, { status: 404 });
@@ -146,15 +161,81 @@ function convertSrtToVtt(srtContent: string): string {
   return vttContent;
 }
 
+// Convert ASS subtitle format to VTT
+function convertAssToVtt(assContent: string): string {
+  let vtt = 'WEBVTT\n\n';
+
+  const lines = assContent.split('\n');
+  let inEvents = false;
+
+  for (const line of lines) {
+    if (line.startsWith('[Events]')) {
+      inEvents = true;
+      continue;
+    }
+
+    if (!inEvents || !line.startsWith('Dialogue:')) {
+      continue;
+    }
+
+    // Parse ASS Dialogue line
+    // Format: Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+    // But some files have simplified format: Dialogue: Layer,Start,End,Style,Text
+    const parts = line.substring('Dialogue:'.length).split(',');
+    if (parts.length < 5) continue;
+
+    // Start and End are at positions 1 and 2
+    const startTime = parts[1].trim();
+    const endTime = parts[2].trim();
+
+    // Text is everything after the 4th comma (or 9th for full format)
+    // Find the text by joining remaining parts after style
+    let text = '';
+    if (parts.length >= 10) {
+      // Full format with Name, Margins, Effect
+      text = parts.slice(9).join(',');
+    } else {
+      // Simplified format
+      text = parts.slice(4).join(',');
+    }
+
+    // Convert ASS time format (H:MM:SS.cc) to VTT (HH:MM:SS.mmm)
+    const convertTime = (assTime: string): string => {
+      const match = assTime.match(/(\d+):(\d{2}):(\d{2})\.(\d{2})/);
+      if (!match) return '00:00:00.000';
+      const [, h, m, s, cs] = match;
+      const hours = h.padStart(2, '0');
+      const ms = (parseInt(cs) * 10).toString().padStart(3, '0');
+      return `${hours}:${m}:${s}.${ms}`;
+    };
+
+    // Convert ASS formatting to VTT
+    // \N -> newline, remove other ASS tags like {\...}
+    text = text
+      .replace(/\\N/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\{[^}]*\}/g, '')  // Remove ASS style tags
+      .trim();
+
+    if (!text) continue;
+
+    vtt += `${convertTime(startTime)} --> ${convertTime(endTime)}\n`;
+    vtt += `${text}\n\n`;
+  }
+
+  return vtt;
+}
+
 // Extract embedded subtitle track from MKV and convert to VTT
 async function extractSubtitleFromMkv(filePath: string, trackIndex: number): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Extract as ASS format first (ffmpeg's VTT conversion has bugs with ASS)
     const ffmpeg = spawn('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-i', filePath,
-      '-map', `0:${trackIndex}`,  // Select specific stream by absolute index
-      '-f', 'webvtt',              // Output as WebVTT
+      '-map', `0:${trackIndex}`,
+      '-f', 'ass',
       'pipe:1'
     ]);
 
@@ -171,7 +252,9 @@ async function extractSubtitleFromMkv(filePath: string, trackIndex: number): Pro
 
     ffmpeg.on('close', (code) => {
       if (code === 0) {
-        resolve(output);
+        // Convert ASS to VTT manually
+        const vtt = convertAssToVtt(output);
+        resolve(vtt);
       } else {
         console.error(`ffmpeg subtitle extraction error:`, errorOutput);
         reject(new Error(`ffmpeg exited with code ${code}`));
@@ -182,14 +265,54 @@ async function extractSubtitleFromMkv(filePath: string, trackIndex: number): Pro
   });
 }
 
-// Stream MKV file remuxed to MP4 using ffmpeg
-function streamRemuxedVideo(
+// Get video codec using ffprobe
+async function getVideoCodec(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=codec_name',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath
+    ]);
+
+    let output = '';
+    ffprobe.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    ffprobe.on('close', (code) => {
+      if (code === 0) {
+        resolve(output.trim().toLowerCase());
+      } else {
+        reject(new Error(`ffprobe exited with code ${code}`));
+      }
+    });
+
+    ffprobe.on('error', reject);
+  });
+}
+
+// Stream MKV file remuxed/transcoded to MP4 using ffmpeg
+async function streamRemuxedVideo(
   filePath: string,
-  seekSeconds: number = 0
-): { stream: ReadableStream<Uint8Array>; process: ReturnType<typeof spawn> } {
+  seekSeconds: number = 0,
+  duration: number = 0
+): Promise<{ stream: ReadableStream<Uint8Array>; process: ReturnType<typeof spawn> }> {
+  // Check video codec to determine if transcoding is needed
+  let videoCodec = 'h264';
+  try {
+    videoCodec = await getVideoCodec(filePath);
+  } catch (err) {
+    console.error('Failed to detect video codec, assuming h264:', err);
+  }
+
+  const needsTranscode = videoCodec === 'hevc' || videoCodec === 'h265' || videoCodec === 'vp9' || videoCodec === 'av1';
+
   const ffmpegArgs = [
     '-hide_banner',
     '-loglevel', 'error',
+    '-fflags', '+genpts',  // Regenerate timestamps for better compatibility
   ];
 
   // Add seek if needed (before input for faster seeking)
@@ -197,14 +320,41 @@ function streamRemuxedVideo(
     ffmpegArgs.push('-ss', seekSeconds.toString());
   }
 
+  ffmpegArgs.push('-i', filePath);
+
+  // Map only the first video stream and first audio stream
   ffmpegArgs.push(
-    '-i', filePath,
-    '-c:v', 'copy',      // Copy video stream (no re-encoding)
+    '-map', '0:v:0',  // First video stream
+    '-map', '0:a:0',  // First audio stream only
+  );
+
+  if (needsTranscode) {
+    // Transcode to H.264 for browser compatibility
+    ffmpegArgs.push(
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',  // Fast encoding for streaming
+      '-crf', '23',           // Good quality/size balance
+      '-tune', 'animation',   // Optimize for animated content (good for most TV)
+      '-profile:v', 'high',   // High profile for better quality
+      '-level', '4.1',        // Wide compatibility
+      '-pix_fmt', 'yuv420p',  // Ensure browser compatibility
+    );
+  } else {
+    // Just copy the video stream if already H.264
+    ffmpegArgs.push('-c:v', 'copy');
+  }
+
+  ffmpegArgs.push(
     '-c:a', 'aac',       // Re-encode audio to AAC for compatibility
+    '-ac', '2',          // Downmix to stereo for wider compatibility
+    '-b:a', '192k',      // Good audio bitrate
+    '-ar', '48000',      // Standard sample rate
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4',
     'pipe:1'             // Output to stdout
   );
+
+  console.log(`Streaming ${filePath} (codec: ${videoCodec}, transcode: ${needsTranscode})`);
 
   const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
@@ -270,6 +420,14 @@ export async function GET(
     if (ext === '.mkv') {
       const range = request.headers.get('range');
       let seekSeconds = 0;
+      let duration = 0;
+
+      // Always get the duration for the timeline
+      try {
+        duration = await getVideoDuration(filePath);
+      } catch (err) {
+        console.error('Failed to get video duration:', err);
+      }
 
       if (range) {
         // Parse range header and convert byte position to time position
@@ -277,34 +435,37 @@ export async function GET(
         if (match) {
           const startByte = parseInt(match[1], 10);
 
-          if (startByte > 0) {
-            try {
-              const duration = await getVideoDuration(filePath);
-              // Estimate time position based on byte position (assumes ~constant bitrate)
-              seekSeconds = (startByte / fileSize) * duration;
-            } catch (err) {
-              console.error('Failed to get video duration:', err);
-            }
+          if (startByte > 0 && duration > 0) {
+            // Estimate time position based on byte position (assumes ~constant bitrate)
+            seekSeconds = (startByte / fileSize) * duration;
           }
         }
       }
 
-      const { stream, process: ffmpeg } = streamRemuxedVideo(filePath, seekSeconds);
+      const { stream, process: ffmpeg } = await streamRemuxedVideo(filePath, seekSeconds, duration);
 
       // Handle client disconnect
       request.signal.addEventListener('abort', () => {
         ffmpeg.kill('SIGTERM');
       });
 
+      // Build headers with duration info
+      const headers: Record<string, string> = {
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, X-Content-Duration',
+        'Cache-Control': 'no-cache', // Don't cache remuxed streams
+      };
+
+      // Add duration header if available (helps some players)
+      if (duration > 0) {
+        headers['X-Content-Duration'] = duration.toString();
+      }
+
       return new Response(stream, {
         status: 200,
-        headers: {
-          'Content-Type': 'video/mp4',
-          'Accept-Ranges': 'bytes',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
-          'Cache-Control': 'no-cache', // Don't cache remuxed streams
-        },
+        headers,
       });
     }
 
