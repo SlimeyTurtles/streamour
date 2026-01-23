@@ -74,7 +74,7 @@ def generate_thumbnail(video_path, timestamp=None):
         '-ss', str(timestamp),  # Seek to timestamp
         '-i', str(video_path),   # Input file
         '-vframes', '1',         # Extract 1 frame
-        '-vf', 'scale=1280:-1',  # Scale to 1280px width, maintain aspect ratio
+        '-vf', 'scale=1920:-1',  # Scale to 1920px width (1080p), maintain aspect ratio
         '-q:v', '2',             # High quality (2-5 is good, lower is better)
         '-y',                    # Overwrite output file
         str(thumbnail_path)
