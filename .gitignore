@@ -44,3 +44,8 @@ next-env.d.ts
 
 # claude code
 CLAUDE.md
+
+# python
+__pycache__/
+*.pyc
+/tools/__pycache__

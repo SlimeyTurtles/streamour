@@ -175,8 +175,7 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
         process = subprocess.Popen(
             ffmpeg_args,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            stderr=subprocess.PIPE
         )
 
         last_percent = -1
@@ -187,8 +186,14 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
         timeout_seconds = timeout_minutes * 60 if timeout_minutes > 0 else None
         timed_out = False
         last_progress_time = start_time
+        startup_grace = 60  # Give ffmpeg 60 seconds to start before stall detection kicks in
+        got_first_output = False
 
         # Read progress from stdout with non-blocking I/O
+        # Use raw file descriptor for select (buffered file objects don't work reliably)
+        stdout_fd = process.stdout.fileno()
+        line_buffer = ""
+
         while process.poll() is None:
             # Check for overall timeout
             total_elapsed = time.time() - start_time
@@ -200,68 +205,86 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
                 break
 
             # Check for stall timeout (no progress for too long)
+            # Use longer grace period during startup (ffmpeg analyzing input)
             stall_duration = time.time() - last_progress_time
-            if stall_duration > stall_timeout:
+            effective_stall_timeout = stall_timeout if got_first_output else max(stall_timeout, startup_grace)
+            if effective_stall_timeout > 0 and stall_duration > effective_stall_timeout:
                 log(f"  STALLED for {format_duration(stall_duration)} with no progress - killing process")
                 process.kill()
                 process.wait()
                 timed_out = True
                 break
 
-            # Use select to check if stdout has data (with 1 second timeout)
-            ready, _, _ = select.select([process.stdout], [], [], 1.0)
+            # Use select on raw file descriptor (with 1 second timeout)
+            ready, _, _ = select.select([stdout_fd], [], [], 1.0)
             if not ready:
                 continue
 
-            line = process.stdout.readline()
-            if not line:
+            # Read available data (non-blocking since select said data is ready)
+            try:
+                chunk = os.read(stdout_fd, 4096).decode('utf-8', errors='replace')
+            except OSError:
+                continue
+
+            if not chunk:
                 continue
 
             last_progress_time = time.time()
+            if not got_first_output:
+                got_first_output = True
+                log(f"  ffmpeg started producing output...")
+            line_buffer += chunk
 
-            # Parse progress info
-            if line.startswith('out_time_ms='):
-                try:
-                    time_ms = int(line.split('=')[1].strip())
-                    current_time = time_ms / 1_000_000  # Convert to seconds
-                    elapsed = time.time() - start_time
+            # Process complete lines
+            while '\n' in line_buffer:
+                line, line_buffer = line_buffer.split('\n', 1)
+                line = line.strip()
+                if not line:
+                    continue
 
-                    if duration > 0 and current_time > 0:
-                        percent = min(99, int((current_time / duration) * 100))
-                        speed = current_time / elapsed if elapsed > 0 else 0
+                # Parse progress info
+                if line.startswith('out_time_ms='):
+                    try:
+                        time_ms = int(line.split('=')[1].strip())
+                        current_time = time_ms / 1_000_000  # Convert to seconds
+                        elapsed = time.time() - start_time
 
-                        # Calculate ETA
-                        remaining_video = duration - current_time
-                        eta_seconds = remaining_video / speed if speed > 0 else 0
-                        eta_str = format_duration(eta_seconds)
+                        if duration > 0 and current_time > 0:
+                            percent = min(99, int((current_time / duration) * 100))
+                            speed = current_time / elapsed if elapsed > 0 else 0
 
-                        # Log every 5% or every 30 seconds
-                        now = time.time()
-                        should_log = (
-                            (percent != last_percent and percent % 5 == 0) or
-                            (now - last_log_time >= 30)
-                        )
+                            # Calculate ETA
+                            remaining_video = duration - current_time
+                            eta_seconds = remaining_video / speed if speed > 0 else 0
+                            eta_str = format_duration(eta_seconds)
 
-                        if should_log:
-                            log(f"  {percent}% | {format_duration(current_time)}/{duration_str} | Speed: {speed:.1f}x | ETA: {eta_str} | Elapsed: {format_duration(elapsed)}")
-                            last_percent = percent
-                            last_log_time = now
+                            # Log every 5% or every 30 seconds
+                            now = time.time()
+                            should_log = (
+                                (percent != last_percent and percent % 5 == 0) or
+                                (now - last_log_time >= 30)
+                            )
 
-                except (ValueError, IndexError):
-                    pass
-            elif line.startswith('speed='):
-                # Parse actual encoding speed
-                try:
-                    speed_str = line.split('=')[1].strip().replace('x', '')
-                    if speed_str and speed_str != 'N/A':
-                        speed = float(speed_str)
-                except (ValueError, IndexError):
-                    pass
+                            if should_log:
+                                log(f"  {percent}% | {format_duration(current_time)}/{duration_str} | Speed: {speed:.1f}x | ETA: {eta_str} | Elapsed: {format_duration(elapsed)}")
+                                last_percent = percent
+                                last_log_time = now
+
+                    except (ValueError, IndexError):
+                        pass
+                elif line.startswith('speed='):
+                    # Parse actual encoding speed
+                    try:
+                        speed_str = line.split('=')[1].strip().replace('x', '')
+                        if speed_str and speed_str != 'N/A':
+                            speed = float(speed_str)
+                    except (ValueError, IndexError):
+                        pass
 
         total_elapsed = time.time() - start_time
 
         if timed_out or process.returncode != 0:
-            stderr = process.stderr.read() if not timed_out else "Timeout exceeded"
+            stderr = process.stderr.read().decode('utf-8', errors='replace') if not timed_out else "Timeout exceeded"
             # Clean up partial files on failure
             if hls_dir.exists():
                 for f in hls_dir.iterdir():
