@@ -48,6 +48,50 @@ async function getVideoDuration(filePath: string): Promise<number> {
   });
 }
 
+interface SubtitleTrack {
+  index: number;
+  language: string;
+  title: string;
+}
+
+// Get subtitle tracks from MKV file
+async function getSubtitleTracks(filePath: string): Promise<SubtitleTrack[]> {
+  return new Promise((resolve) => {
+    const ffprobe = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 's',
+      '-show_entries', 'stream=index:stream_tags=language,title',
+      '-of', 'json',
+      filePath
+    ]);
+
+    let output = '';
+    ffprobe.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    ffprobe.on('close', (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      try {
+        const data = JSON.parse(output);
+        const tracks: SubtitleTrack[] = (data.streams || []).map((s: any) => ({
+          index: s.index,
+          language: s.tags?.language || 'und',
+          title: s.tags?.title || '',
+        }));
+        resolve(tracks);
+      } catch {
+        resolve([]);
+      }
+    });
+
+    ffprobe.on('error', () => resolve([]));
+  });
+}
+
 // Convert Node.js Readable stream to Web ReadableStream
 function nodeStreamToWebStream(nodeStream: Readable): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -389,12 +433,31 @@ export async function GET(
     const fileSize = stat.size;
     const ext = path.extname(filePath).toLowerCase();
 
-    // Check for subtitle extraction request (e.g., ?subtitle=2)
+    // Check for subtitle extraction request (e.g., ?subtitle=2 or ?subtitle=auto)
     const subtitleParam = request.nextUrl.searchParams.get('subtitle');
     if (subtitleParam !== null && ext === '.mkv') {
-      const trackIndex = parseInt(subtitleParam, 10);
-      if (isNaN(trackIndex)) {
-        return NextResponse.json({ error: 'Invalid subtitle track index' }, { status: 400 });
+      let trackIndex: number;
+
+      if (subtitleParam === 'auto') {
+        // Auto-detect best subtitle track
+        const tracks = await getSubtitleTracks(filePath);
+        if (tracks.length === 0) {
+          return new NextResponse('', {
+            status: 204,
+            headers: { 'Access-Control-Allow-Origin': '*' },
+          });
+        }
+        // Prefer English, then first available
+        const englishTrack = tracks.find(t =>
+          t.language === 'eng' || t.language === 'en' ||
+          t.title.toLowerCase().includes('english')
+        );
+        trackIndex = englishTrack ? englishTrack.index : tracks[0].index;
+      } else {
+        trackIndex = parseInt(subtitleParam, 10);
+        if (isNaN(trackIndex)) {
+          return NextResponse.json({ error: 'Invalid subtitle track index' }, { status: 400 });
+        }
       }
 
       try {

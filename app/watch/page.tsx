@@ -59,7 +59,9 @@ function WatchPageContent() {
   const progressPollRef = useRef<NodeJS.Timeout | null>(null);
 
   const videoUrl = searchParams.get('video');
-  const subtitlesUrl = searchParams.get('subtitles');
+  const subtitlesUrlParam = searchParams.get('subtitles');
+  // Auto-request subtitles from MKV if no explicit subtitle URL provided
+  const subtitlesUrl = subtitlesUrlParam || (videoUrl?.includes('.mkv') ? `${videoUrl}?subtitle=auto` : null);
   const title = searchParams.get('title') || 'Unknown';
 
   // Convert video URL to HLS URL for MKV files
