@@ -16,6 +16,7 @@ Examples:
     python generate-hls.py /path/to/media     # Scan specific directory
     python generate-hls.py --force            # Re-generate all HLS even if exists
     python generate-hls.py --timeout 30       # Timeout after 30 minutes per file
+    python generate-hls.py --stall-timeout 60 # Kill if no progress for 60 seconds
     python generate-hls.py --skip "Extras"    # Skip files containing "Extras" in path
     python generate-hls.py -s "Extras" -s "Animatics" -t 30  # Multiple skips + timeout
 """
@@ -100,7 +101,7 @@ def log(message: str, flush: bool = True):
     print(f"[{timestamp}] {message}", flush=flush)
 
 
-def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int = 0, timeout_minutes: int = 0) -> tuple[bool, str]:
+def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int = 0, timeout_minutes: int = 0, stall_timeout: int = 120) -> tuple[bool, str]:
     """
     Generate HLS playlist and segments for an MKV file.
 
@@ -108,7 +109,7 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
         tuple: (success: bool, message: str)
     """
     import time
-    import signal
+    import select
 
     hls_dir = Path(str(mkv_path) + '.hls')
     progress_prefix = f"[{index}/{total}]" if total > 0 else ""
@@ -183,12 +184,40 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
         start_time = time.time()
         last_log_time = start_time
         speed = 0.0
+        timeout_seconds = timeout_minutes * 60 if timeout_minutes > 0 else None
+        timed_out = False
+        last_progress_time = start_time
 
-        # Read progress from stdout
-        while True:
-            line = process.stdout.readline()
-            if not line and process.poll() is not None:
+        # Read progress from stdout with non-blocking I/O
+        while process.poll() is None:
+            # Check for overall timeout
+            total_elapsed = time.time() - start_time
+            if timeout_seconds and total_elapsed > timeout_seconds:
+                log(f"  TIMEOUT after {format_duration(total_elapsed)} - killing process")
+                process.kill()
+                process.wait()
+                timed_out = True
                 break
+
+            # Check for stall timeout (no progress for too long)
+            stall_duration = time.time() - last_progress_time
+            if stall_duration > stall_timeout:
+                log(f"  STALLED for {format_duration(stall_duration)} with no progress - killing process")
+                process.kill()
+                process.wait()
+                timed_out = True
+                break
+
+            # Use select to check if stdout has data (with 1 second timeout)
+            ready, _, _ = select.select([process.stdout], [], [], 1.0)
+            if not ready:
+                continue
+
+            line = process.stdout.readline()
+            if not line:
+                continue
+
+            last_progress_time = time.time()
 
             # Parse progress info
             if line.startswith('out_time_ms='):
@@ -228,21 +257,6 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
                         speed = float(speed_str)
                 except (ValueError, IndexError):
                     pass
-
-        # Wait for completion and get return code
-        # Check for timeout
-        timeout_seconds = timeout_minutes * 60 if timeout_minutes > 0 else None
-        timed_out = False
-
-        while process.poll() is None:
-            total_elapsed = time.time() - start_time
-            if timeout_seconds and total_elapsed > timeout_seconds:
-                log(f"  TIMEOUT after {format_duration(total_elapsed)} - killing process")
-                process.kill()
-                process.wait()
-                timed_out = True
-                break
-            time.sleep(0.5)
 
         total_elapsed = time.time() - start_time
 
@@ -320,6 +334,12 @@ def main():
         action='append',
         default=[],
         help='Skip files matching this pattern (can be used multiple times, e.g. --skip "Extras" --skip "Animatics")'
+    )
+    parser.add_argument(
+        '--stall-timeout',
+        type=int,
+        default=120,
+        help='Kill ffmpeg if no progress output for this many seconds (default: 120)'
     )
 
     args = parser.parse_args()
@@ -400,7 +420,7 @@ def main():
         # Parallel processing
         with ThreadPoolExecutor(max_workers=args.parallel) as executor:
             futures = {
-                executor.submit(generate_hls, mkv, args.force, i, len(to_process), args.timeout): mkv
+                executor.submit(generate_hls, mkv, args.force, i, len(to_process), args.timeout, args.stall_timeout): mkv
                 for i, mkv in enumerate(to_process, 1)
             }
 
@@ -418,7 +438,7 @@ def main():
     else:
         # Sequential processing with progress
         for i, mkv in enumerate(to_process, 1):
-            success, message = generate_hls(mkv, args.force, i, len(to_process), args.timeout)
+            success, message = generate_hls(mkv, args.force, i, len(to_process), args.timeout, args.stall_timeout)
 
             if success:
                 success_count += 1
