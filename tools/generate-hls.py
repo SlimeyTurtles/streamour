@@ -109,7 +109,7 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
         tuple: (success: bool, message: str)
     """
     import time
-    import select
+    import threading
 
     hls_dir = Path(str(mkv_path) + '.hls')
     progress_prefix = f"[{index}/{total}]" if total > 0 else ""
@@ -132,12 +132,11 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
     log(f"{progress_prefix} Starting: {mkv_path.name}")
     log(f"  Duration: {duration_str}, Codec: {codec}, Transcode: {needs_transcode}")
 
-    # Build ffmpeg command
+    # Build ffmpeg command (output progress to stderr with -stats)
     ffmpeg_args = [
         'ffmpeg',
         '-hide_banner',
-        '-loglevel', 'info',
-        '-progress', 'pipe:1',
+        '-y',  # Overwrite output files
         '-i', str(mkv_path),
         '-map', '0:v:0',
         '-map', '0:a:0',
@@ -171,137 +170,83 @@ def generate_hls(mkv_path: Path, force: bool = False, index: int = 0, total: int
     ])
 
     try:
-        # Run ffmpeg with progress output
+        start_time = time.time()
+        timeout_seconds = timeout_minutes * 60 if timeout_minutes > 0 else None
+
+        # Run ffmpeg - simple approach with threading for output
         process = subprocess.Popen(
             ffmpeg_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
 
-        last_percent = -1
-        current_time = 0
-        start_time = time.time()
-        last_log_time = start_time
-        speed = 0.0
-        timeout_seconds = timeout_minutes * 60 if timeout_minutes > 0 else None
-        timed_out = False
-        last_progress_time = start_time
-        startup_grace = 60  # Give ffmpeg 60 seconds to start before stall detection kicks in
-        got_first_output = False
+        # Collect stderr in a thread to prevent blocking
+        stderr_output = []
+        last_activity = [time.time()]  # Use list for mutable reference in thread
 
-        # Read progress from stdout with non-blocking I/O
-        # Use raw file descriptor for select (buffered file objects don't work reliably)
-        stdout_fd = process.stdout.fileno()
-        line_buffer = ""
+        def read_stderr():
+            for line in process.stderr:
+                stderr_output.append(line)
+                last_activity[0] = time.time()
+                # Log ffmpeg progress lines (they contain "time=")
+                try:
+                    line_str = line.decode('utf-8', errors='replace').strip()
+                    if 'time=' in line_str and 'speed=' in line_str:
+                        # Extract just the relevant part
+                        log(f"  {line_str}")
+                except:
+                    pass
 
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+
+        # Wait for process with timeout checking
         while process.poll() is None:
-            # Check for overall timeout
-            total_elapsed = time.time() - start_time
-            if timeout_seconds and total_elapsed > timeout_seconds:
-                log(f"  TIMEOUT after {format_duration(total_elapsed)} - killing process")
+            time.sleep(1)
+            elapsed = time.time() - start_time
+
+            # Check overall timeout
+            if timeout_seconds and elapsed > timeout_seconds:
+                log(f"  TIMEOUT after {format_duration(elapsed)} - killing process")
                 process.kill()
                 process.wait()
-                timed_out = True
                 break
 
-            # Check for stall timeout (no progress for too long)
-            # Use longer grace period during startup (ffmpeg analyzing input)
-            stall_duration = time.time() - last_progress_time
-            effective_stall_timeout = stall_timeout if got_first_output else max(stall_timeout, startup_grace)
-            if effective_stall_timeout > 0 and stall_duration > effective_stall_timeout:
-                log(f"  STALLED for {format_duration(stall_duration)} with no progress - killing process")
-                process.kill()
-                process.wait()
-                timed_out = True
-                break
+            # Check stall timeout
+            if stall_timeout > 0:
+                stall_time = time.time() - last_activity[0]
+                if stall_time > stall_timeout:
+                    log(f"  STALLED for {format_duration(stall_time)} - killing process")
+                    process.kill()
+                    process.wait()
+                    break
 
-            # Use select on raw file descriptor (with 1 second timeout)
-            ready, _, _ = select.select([stdout_fd], [], [], 1.0)
-            if not ready:
-                continue
-
-            # Read available data (non-blocking since select said data is ready)
-            try:
-                chunk = os.read(stdout_fd, 4096).decode('utf-8', errors='replace')
-            except OSError:
-                continue
-
-            if not chunk:
-                continue
-
-            last_progress_time = time.time()
-            if not got_first_output:
-                got_first_output = True
-                log(f"  ffmpeg started producing output...")
-            line_buffer += chunk
-
-            # Process complete lines
-            while '\n' in line_buffer:
-                line, line_buffer = line_buffer.split('\n', 1)
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Parse progress info
-                if line.startswith('out_time_ms='):
-                    try:
-                        time_ms = int(line.split('=')[1].strip())
-                        current_time = time_ms / 1_000_000  # Convert to seconds
-                        elapsed = time.time() - start_time
-
-                        if duration > 0 and current_time > 0:
-                            percent = min(99, int((current_time / duration) * 100))
-                            speed = current_time / elapsed if elapsed > 0 else 0
-
-                            # Calculate ETA
-                            remaining_video = duration - current_time
-                            eta_seconds = remaining_video / speed if speed > 0 else 0
-                            eta_str = format_duration(eta_seconds)
-
-                            # Log every 5% or every 30 seconds
-                            now = time.time()
-                            should_log = (
-                                (percent != last_percent and percent % 5 == 0) or
-                                (now - last_log_time >= 30)
-                            )
-
-                            if should_log:
-                                log(f"  {percent}% | {format_duration(current_time)}/{duration_str} | Speed: {speed:.1f}x | ETA: {eta_str} | Elapsed: {format_duration(elapsed)}")
-                                last_percent = percent
-                                last_log_time = now
-
-                    except (ValueError, IndexError):
-                        pass
-                elif line.startswith('speed='):
-                    # Parse actual encoding speed
-                    try:
-                        speed_str = line.split('=')[1].strip().replace('x', '')
-                        if speed_str and speed_str != 'N/A':
-                            speed = float(speed_str)
-                    except (ValueError, IndexError):
-                        pass
-
+        stderr_thread.join(timeout=2)
         total_elapsed = time.time() - start_time
 
-        if timed_out or process.returncode != 0:
-            stderr = process.stderr.read().decode('utf-8', errors='replace') if not timed_out else "Timeout exceeded"
+        if process.returncode != 0:
+            stderr_text = b''.join(stderr_output).decode('utf-8', errors='replace')
             # Clean up partial files on failure
             if hls_dir.exists():
                 for f in hls_dir.iterdir():
                     f.unlink()
                 hls_dir.rmdir()
-            if timed_out:
-                log(f"  FAILED: Timeout after {format_duration(total_elapsed)}")
-                return False, f"Timeout after {format_duration(total_elapsed)}"
-            else:
-                log(f"  FAILED after {format_duration(total_elapsed)}: ffmpeg error")
-                return False, f"ffmpeg error: {stderr[:200]}"
+            log(f"  FAILED after {format_duration(total_elapsed)}")
+            return False, f"ffmpeg error: {stderr_text[-500:]}"
 
         log(f"  Done! Total time: {format_duration(total_elapsed)}")
         return True, f"Generated ({'transcoded' if needs_transcode else 'remuxed'}) in {format_duration(total_elapsed)}"
 
     except Exception as e:
         log(f"  FAILED: {str(e)}")
+        # Clean up on exception
+        if hls_dir.exists():
+            try:
+                for f in hls_dir.iterdir():
+                    f.unlink()
+                hls_dir.rmdir()
+            except:
+                pass
         return False, f"Error: {str(e)}"
 
 
