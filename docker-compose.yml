@@ -1,0 +1,18 @@
+services:
+  streamour:
+    build: .
+    container_name: streamour
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - AUTH_PASSWORD=${AUTH_PASSWORD:?AUTH_PASSWORD is required}
+      - MEDIA_DIR=/media
+    volumes:
+      - ${MEDIA_PATH:?MEDIA_PATH is required}:/media:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
