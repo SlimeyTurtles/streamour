@@ -22,6 +22,7 @@ export interface Season {
 export interface Episode {
   name: string;
   path: string;
+  subtitles?: string;
 }
 
 async function scanMediaFolder(): Promise<Show[]> {
