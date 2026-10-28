@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
+import { currentVersion } from '@/lib/changelog';
 
 interface Episode {
   name: string;
@@ -193,7 +195,15 @@ export default function Home() {
     <div className="min-h-screen bg-black text-white">
       <header className="px-8 py-6 border-b border-gray-800 flex items-center justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-red-500">Streamour</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-4xl font-bold text-red-500">Streamour</h1>
+            <Link
+              href="/updates"
+              className="text-xs text-gray-500 hover:text-red-400 transition-colors border border-gray-800 hover:border-red-800/50 rounded-full px-2 py-0.5 mt-2"
+            >
+              v{currentVersion}
+            </Link>
+          </div>
           <p className="text-gray-400 mt-2">Your personal streaming service</p>
         </div>
         <button
