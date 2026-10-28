@@ -1,0 +1,100 @@
+name: Deploy staging
+
+# Manual-only. Pick any branch in the "Run workflow" dropdown and it gets
+# built and started as a throwaway staging instance on the home server
+# (avinhsdell) at http://192.168.1.64:3005 (LAN only unless a public
+# hostname is added for it).
+#
+# Staging self-destructs: a small "reaper" container sleeps for the TTL
+# and then removes the staging container and its image. Re-running this
+# workflow replaces both the staging instance and the reaper, so the
+# clock restarts from the latest deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ttl_hours:
+        description: 'Hours to keep staging alive before it is torn down'
+        required: true
+        default: '4'
+        type: string
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  DEPLOY_DIR: /home/avinh/streamour-staging
+  PROD_DIR: /home/avinh/streamour
+  PROJECT: streamour-staging
+  PORT: 3005
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, streamour]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show what is being deployed
+        run: |
+          echo "ref:    ${{ github.ref_name }}"
+          echo "commit: ${{ github.sha }}"
+          echo "ttl:    ${{ inputs.ttl_hours }}h"
+          echo "version: $(node -p "require('./package.json').version")"
+
+      - name: Sync source to staging dir
+        run: |
+          mkdir -p "$DEPLOY_DIR"
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='.env*.local' \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            --exclude='.next/' \
+            --exclude='media/' \
+            "${{ github.workspace }}/" "$DEPLOY_DIR/"
+
+      - name: Ensure staging .env
+        # Staging reuses prod's AUTH_PASSWORD and MEDIA_PATH unless a
+        # staging-specific .env has been placed in the staging dir on the box.
+        run: |
+          if [ ! -f "$DEPLOY_DIR/.env" ]; then
+            cp "$PROD_DIR/.env" "$DEPLOY_DIR/.env"
+            echo "copied .env from prod"
+          else
+            echo "using existing staging .env"
+          fi
+
+      - name: Cancel any pending teardown
+        run: docker rm -f "${PROJECT}-reaper" 2>/dev/null || true
+
+      - name: Build + start staging
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          docker compose -p "$PROJECT" \
+            -f docker-compose.yml -f docker-compose.staging.yml \
+            up -d --build
+
+      - name: Smoke test
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          sleep 5
+          docker compose -p "$PROJECT" -f docker-compose.yml -f docker-compose.staging.yml ps
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${PORT}/")
+          echo "status: $code"
+          case "$code" in 200|307) echo "ok"; exit 0 ;; *) echo "unexpected"; exit 1 ;; esac
+
+      - name: Schedule teardown
+        # A detached container with the docker socket mounted sleeps for the
+        # TTL, then removes the staging container and its image. It outlives
+        # this job and is visible with `docker ps` as streamour-staging-reaper.
+        run: |
+          ttl_seconds=$(( ${{ inputs.ttl_hours }} * 3600 ))
+          docker run -d --rm \
+            --name "${PROJECT}-reaper" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            docker:cli \
+            sh -c "sleep ${ttl_seconds}; docker rm -f ${PROJECT}; docker image rm -f ${PROJECT}-streamour || true"
+          echo "staging is up at http://192.168.1.64:${PORT} and will be torn down in ${{ inputs.ttl_hours }}h"

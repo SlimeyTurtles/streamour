@@ -1,0 +1,10 @@
+# Override for the throwaway staging instance. Use together with the base file:
+#   docker compose -p streamour-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+# Deployed by .github/workflows/deploy-staging.yml; torn down automatically.
+services:
+  streamour:
+    container_name: streamour-staging
+    # Staging is meant to die; don't bring it back after a reboot.
+    restart: "no"
+    ports: !override
+      - "3005:3000"

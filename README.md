@@ -52,6 +52,25 @@ docker compose down
 docker compose up -d --build --force-recreate
 ```
 
+## Deploying (home server)
+
+Deploys are **manual** GitHub Actions, run from the repo's Actions tab. Both run on a
+self-hosted runner on the home server, which builds the image locally and restarts
+the container. Pick the branch to deploy in the "Use workflow from" dropdown.
+
+| Workflow | What it does | URL |
+|----------|--------------|-----|
+| **Deploy production** | rsyncs into `~/streamour`, rebuilds, restarts, smoke-tests | https://streamour.net |
+| **Deploy staging** | rsyncs into `~/streamour-staging`, builds a separate `streamour-staging` container, smoke-tests, then schedules teardown | http://192.168.1.64:3005 (LAN) |
+
+Staging self-destructs after `ttl_hours` (default 4). A `streamour-staging-reaper`
+container does the teardown; re-running the staging workflow replaces it, so the
+clock restarts from the latest deploy. Staging reuses production's `.env` unless
+`~/streamour-staging/.env` exists on the server.
+
+Workflow files: `.github/workflows/deploy-production.yml`, `.github/workflows/deploy-staging.yml`.
+Staging port/container overrides: `docker-compose.staging.yml`.
+
 ## Local Development
 
 ### Requirements
