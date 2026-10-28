@@ -5,6 +5,7 @@ A personal media streaming service built with Next.js. Netflix-like experience f
 ## Where things live
 
 - **Work tracking:** GitHub project board https://github.com/users/SlimeyTurtles/projects/11 — every change starts as an issue there. Reference the issue number in commits and PRs (`Closes #12`).
+- **Shared Claude permissions:** `.claude/settings.json` (committed) pre-approves the routine gh/npm/docker commands used here. Personal extras go in `.claude/settings.local.json` (not committed).
 - **Docs for humans and agents:** the repo wiki https://github.com/SlimeyTurtles/streamour/wiki (getting started, workflow, deploys, media layout, architecture). This file is the short version; the wiki is the long version. Keep them consistent.
 
 ## Tech Stack
