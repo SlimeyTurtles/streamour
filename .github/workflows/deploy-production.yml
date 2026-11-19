@@ -100,6 +100,15 @@ jobs:
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose -p streamour up -d --build
 
+      - name: Ensure nightly backup cron
+        # tools/backup-db.sh dumps the database to the RAID every night and
+        # keeps 14 days. Installing the entry here keeps the crontab in step
+        # with the repo; the line is replaced, never duplicated.
+        run: |
+          line="30 3 * * * $DEPLOY_DIR/tools/backup-db.sh >> \$HOME/streamour-backup.log 2>&1"
+          { crontab -l 2>/dev/null | grep -v 'streamour/tools/backup-db.sh' || true; echo "$line"; } | crontab -
+          crontab -l | grep backup-db.sh
+
       - name: Smoke test
         working-directory: ${{ env.DEPLOY_DIR }}
         run: |
