@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { existsSync } from 'fs';
 import { resolveMediaPath } from '@/lib/media-path';
+import { requireSession } from '@/lib/auth';
 import { thumbnailCachePath } from '@/lib/cache';
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
@@ -115,6 +116,10 @@ export async function HEAD(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  if ((await requireSession()) instanceof NextResponse) {
+    return new NextResponse(null, { status: 401 });
+  }
+
   const { path: pathSegments } = await params;
   const filePath = resolveMediaPath(pathSegments);
   if (!filePath) {
@@ -418,6 +423,11 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
+    const auth = await requireSession();
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
     const { path: pathSegments } = await params;
     const mediaPath = resolveMediaPath(pathSegments);
     if (!mediaPath) {
