@@ -12,6 +12,14 @@ export interface ChangelogEntry {
 // Newest first. The first entry's version is the current site version.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.3.1',
+    date: '2026-11-18',
+    title: 'Media needs a sign-in',
+    changes: {
+      fixed: ['Videos, subtitles and thumbnails are now only served to signed-in viewers'],
+    },
+  },
+  {
     version: '1.3.0',
     date: '2026-11-18',
     title: 'Real sign-in sessions',
