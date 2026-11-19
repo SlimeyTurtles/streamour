@@ -12,6 +12,18 @@ export interface ChangelogEntry {
 // Newest first. The first entry's version is the current site version.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.1',
+    date: '2026-11-18',
+    title: 'MP4 shows are back',
+    changes: {
+      fixed: [
+        'Shows with .mp4 episodes were missing from the library',
+        'External .vtt / .srt subtitle files are picked up again',
+        'Episode thumbnails for .mp4 episodes',
+      ],
+    },
+  },
+  {
     version: '1.2.0',
     date: '2026-08-26',
     title: 'Updates page',

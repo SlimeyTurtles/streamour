@@ -47,3 +47,5 @@ next-env.d.ts
 __pycache__/
 *.pyc
 /tools/__pycache__
+# local clone of the GitHub wiki
+/.wiki
