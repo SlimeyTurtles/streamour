@@ -40,7 +40,7 @@ function RecentlyPlayedCard({ item, onClick }: { item: RecentlyPlayed; onClick: 
   const [imgError, setImgError] = useState(false);
 
   const getEpisodeThumbnail = (videoPath: string): string => {
-    return videoPath.replace(/\.mkv$/i, '.jpg');
+    return videoPath.replace(/\.(mkv|mp4)$/i, '.jpg');
   };
 
   const formatTime = (seconds: number): string => {

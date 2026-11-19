@@ -62,16 +62,27 @@ async function scanMediaFolder(): Promise<Show[]> {
           try {
             const seasonContents = await fs.readdir(seasonPath);
             const videoFiles = seasonContents
-              .filter(file => file.match(/\.mkv$/i))
+              .filter(file => file.match(/\.(mkv|mp4)$/i))
               .sort();
+            const mediaUrl = (file: string) =>
+              `/api/media/${encodeURIComponent(entry.name)}/${encodeURIComponent(item.name)}/${encodeURIComponent(file)}`;
 
             for (const videoFile of videoFiles) {
               const baseName = path.parse(videoFile).name;
 
               const episode: Episode = {
                 name: baseName,
-                path: `/api/media/${encodeURIComponent(entry.name)}/${encodeURIComponent(item.name)}/${encodeURIComponent(videoFile)}`,
+                path: mediaUrl(videoFile),
               };
+
+              // External subtitles (same base name) win over embedded tracks.
+              // Without one, the player falls back to ?subtitle=auto for MKV.
+              const subtitleFile =
+                seasonContents.find(file => file === `${baseName}.vtt`) ??
+                seasonContents.find(file => file === `${baseName}.srt`);
+              if (subtitleFile) {
+                episode.subtitles = mediaUrl(subtitleFile);
+              }
 
               season.episodes.push(episode);
             }

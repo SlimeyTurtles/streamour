@@ -11,7 +11,7 @@ function EpisodeCard({ episode, showName, seasonName, onClick }: {
   onClick: () => void;
 }) {
   const [imgError, setImgError] = useState(false);
-  const thumbnailPath = episode.path.replace(/\.mkv$/i, '.jpg');
+  const thumbnailPath = episode.path.replace(/\.(mkv|mp4)$/i, '.jpg');
 
   return (
     <div
@@ -135,7 +135,7 @@ export default function ShowDetailPage() {
   };
 
   const getEpisodeThumbnail = (videoPath: string): string => {
-    return videoPath.replace(/\.mkv$/i, '.jpg');
+    return videoPath.replace(/\.(mkv|mp4)$/i, '.jpg');
   };
 
   if (loading) {
