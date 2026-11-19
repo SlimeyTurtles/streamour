@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-
-function getMediaDir(): string {
-  const mediaDir = process.env.MEDIA_DIR || 'media';
-  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
-}
+import { getMediaDir } from '@/lib/media-path';
 
 export interface Show {
   id: string;

@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import { resolveMediaPath } from '@/lib/media-path';
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
 
-function getMediaDir(): string {
-  const mediaDir = process.env.MEDIA_DIR || 'media';
-  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
-}
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -117,7 +114,10 @@ export async function HEAD(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path: pathSegments } = await params;
-  const filePath = path.join(getMediaDir(), ...pathSegments.map(decodeURIComponent));
+  const filePath = resolveMediaPath(pathSegments);
+  if (!filePath) {
+    return new NextResponse(null, { status: 404 });
+  }
 
   try {
     const stat = await fs.stat(filePath);
@@ -417,7 +417,10 @@ export async function GET(
 ) {
   try {
     const { path: pathSegments } = await params;
-    const filePath = path.join(getMediaDir(), ...pathSegments.map(decodeURIComponent));
+    const filePath = resolveMediaPath(pathSegments);
+    if (!filePath) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
 
     let stat;
     try {
