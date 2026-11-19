@@ -27,7 +27,10 @@ model User {
   role            Role      @default(MEMBER)
   createdAt       DateTime  @default(now()) @map("created_at")
 
-  sessions Session[]
+  sessions       Session[]
+  watchProgress  WatchProgress[]
+  recentlyPlayed RecentlyPlayed[]
+  settings       Setting[]
 
   @@map("users")
 }
@@ -48,4 +51,48 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// Where a user is in an episode. `episodeKey` is the media-relative path
+// ("Show/Season 1/01 - Name.mkv"); renaming a file orphans its row.
+model WatchProgress {
+  userId     String   @map("user_id")
+  episodeKey String   @map("episode_key")
+  positionS  Float    @map("position_s")
+  // 0 when unknown (imported from a browser that never stored it).
+  durationS  Float    @map("duration_s")
+  updatedAt  DateTime @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, episodeKey])
+  @@map("watch_progress")
+}
+
+// The continue-watching row: one entry per show, pointing at the episode the
+// user last played. Its position comes from watch_progress.
+model RecentlyPlayed {
+  userId       String   @map("user_id")
+  showId       String   @map("show_id")
+  episodeKey   String   @map("episode_key")
+  lastPlayedAt DateTime @default(now()) @map("last_played_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, showId])
+  @@index([userId, lastPlayedAt])
+  @@map("recently_played")
+}
+
+// Per-user player settings (volume, subtitle position and sync), as strings.
+// The allowed keys and their validation live in lib/watch-state.ts.
+model Setting {
+  userId String @map("user_id")
+  key    String
+  value  String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, key])
+  @@map("settings")
 }

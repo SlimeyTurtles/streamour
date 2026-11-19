@@ -24,6 +24,7 @@ streamour/
 │   ├── api/
 │   │   ├── auth/login/route.ts   # POST: login, DELETE: logout
 │   │   ├── health/route.ts       # GET: public liveness + DB check (deploy smoke tests)
+│   │   ├── me/                   # Signed-in user's watch state: progress, recently-played, settings, import-legacy
 │   │   ├── media/[...path]/route.ts  # Serves media files with range requests
 │   │   ├── shows/route.ts        # GET: scans media folder, returns show list
 │   │   └── test-video/route.ts   # Test endpoint
@@ -38,11 +39,14 @@ streamour/
 │   ├── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
 │   ├── media-path.ts             # getMediaDir(), resolveMediaPath(): URL segments → path inside the media folder
 │   ├── cache.ts                  # Paths in the writable cache (HLS, thumbnails)
+│   ├── episode-key.ts            # Episode key = media-relative path; shared by browser and server
+│   ├── watch-state.ts            # Server: progress, continue-watching, player settings, legacy import
+│   ├── me-client.ts              # Browser: calls /api/me/*; the pages use this, never localStorage
 │   ├── rate-limit.ts             # In-memory attempt counters for sign-in/code endpoints (429 + Retry-After)
 │   ├── mail.ts                   # sendMail() over a provider (log | resend)
 │   └── mail-templates.ts         # invite, verify email, code, new sign-in
 ├── prisma/
-│   ├── schema.prisma             # Database schema (users, sessions)
+│   ├── schema.prisma             # Database schema (users, sessions, watch_progress, recently_played, settings)
 │   └── migrations/               # Applied by docker-entrypoint.sh on container start
 ├── tools/                        # Utility scripts
 │   ├── convert-srt-to-vtt.py     # Convert SRT subtitles to VTT
@@ -62,7 +66,7 @@ streamour/
 - **Media Scanning**: Auto-discovers shows/seasons/episodes from folder structure
 - **Video Streaming**: MKV files transcoded/remuxed to MP4 on-the-fly via ffmpeg (HEVC/H.265 auto-transcoded to H.264 for browser compatibility)
 - **Subtitles**: Embedded MKV subtitles extracted on-the-fly (prefers English), falls back to external SRT files, with position (top/middle/bottom) and sync controls
-- **Progress Tracking**: LocalStorage-based, resumes playback position
+- **Progress Tracking**: Per user, stored server-side (`watch_progress`, `recently_played`, `settings` tables via `/api/me/*`); resumes on any device
 - **Continue Watching**: Tracks recently played shows on home page
 - **Auto-play**: Plays next episode when current one ends
 - **Mobile Support**: Full support via on-the-fly remuxing
@@ -132,6 +136,10 @@ deleted at teardown.
 | `/api/auth/login` | POST | Login with `{ password }` |
 | `/api/auth/login` | DELETE | Logout (revokes the session, clears cookie) |
 | `/api/shows` | GET | List all shows with seasons/episodes |
+| `/api/me/progress` | GET/PUT | Position in an episode (`?episode=<key>`); PUT at 95%+ clears it |
+| `/api/me/recently-played` | GET | Continue-watching list for the signed-in user |
+| `/api/me/settings` | GET/PUT | Volume, subtitle position and sync |
+| `/api/me/import-legacy` | POST | One-time import of a browser's old `localStorage` data |
 | `/api/health` | GET | Public; 200 when the app is up and can reach the database |
 | `/api/media/[...path]` | GET/HEAD | Serve media files (range support) |
 
@@ -140,7 +148,7 @@ deleted at teardown.
 - Keyboard shortcuts: Space (play/pause), F (fullscreen), M (mute), C (captions), arrows (seek/volume), comma/period (subtitle sync)
 - Subtitle settings: position (top/middle/bottom), sync offset (+/- seconds)
 - Volume persistence across sessions
-- Progress save every few seconds
+- Progress saved to the account every 10 seconds, on pause and when leaving the player
 - Auto-clear progress when video completes (>95%)
 
 ## Versioning & Changelog

@@ -3,6 +3,8 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
+import { fetchProgress, fetchSettings, saveProgress as saveProgressRemote, saveSettings } from '@/lib/me-client';
+import { toShowId } from '@/lib/episode-key';
 
 // TypeScript interfaces for show data
 interface Episode {
@@ -57,6 +59,13 @@ function WatchPageContent() {
   const [hlsLoading, setHlsLoading] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState<number | null>(null);
   const progressPollRef = useRef<NodeJS.Timeout | null>(null);
+  // Watch state lives on the server (lib/me-client.ts). These refs carry it
+  // between the effects below without re-running them.
+  const savedProgressRef = useRef<{ videoUrl: string; position: Promise<number | null> } | null>(null);
+  const progressReadyRef = useRef(false); // don't save until the saved position was applied
+  const lastProgressSaveRef = useRef(0);
+  const savedVolumeRef = useRef<number | null>(null);
+  const settingsLoadedRef = useRef(false);
 
   const videoUrl = searchParams.get('video');
   const subtitlesUrlParam = searchParams.get('subtitles');
@@ -246,49 +255,41 @@ function WatchPageContent() {
     return 'video/mp4';
   };
 
-  // LocalStorage keys
-  const PROGRESS_KEY = 'video_progress';
-  const VOLUME_KEY = 'video_volume';
-  const RECENTLY_PLAYED_KEY = 'recently_played';
-  const SUBTITLE_POSITION_KEY = 'subtitle_position';
-  const SUBTITLE_SYNC_KEY = 'subtitle_sync';
-
-  // Load subtitle settings on mount
+  // Load the user's player settings (volume, subtitle position and sync)
   useEffect(() => {
-    try {
-      const savedPosition = localStorage.getItem(SUBTITLE_POSITION_KEY);
-      if (savedPosition && ['top', 'middle', 'bottom'].includes(savedPosition)) {
-        setSubtitlePosition(savedPosition as 'top' | 'middle' | 'bottom');
+    let cancelled = false;
+    fetchSettings().then(settings => {
+      if (cancelled) return;
+      if (settings.subtitlePosition) {
+        setSubtitlePosition(settings.subtitlePosition);
       }
-      const savedSync = localStorage.getItem(SUBTITLE_SYNC_KEY);
-      if (savedSync) {
-        const syncValue = parseFloat(savedSync);
-        if (!isNaN(syncValue)) {
-          setSubtitleSync(syncValue);
+      if (typeof settings.subtitleSync === 'number') {
+        setSubtitleSync(settings.subtitleSync);
+      }
+      if (typeof settings.volume === 'number') {
+        savedVolumeRef.current = settings.volume;
+        if (videoRef.current) {
+          videoRef.current.volume = settings.volume;
         }
       }
-    } catch (error) {
-      console.error('Failed to load subtitle settings:', error);
-    }
+      settingsLoadedRef.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Save subtitle settings
   const saveSubtitlePosition = (position: 'top' | 'middle' | 'bottom') => {
     setSubtitlePosition(position);
-    try {
-      localStorage.setItem(SUBTITLE_POSITION_KEY, position);
-    } catch (error) {
-      console.error('Failed to save subtitle position:', error);
-    }
+    saveSettings({ subtitlePosition: position });
   };
 
   const saveSubtitleSync = (sync: number) => {
-    setSubtitleSync(sync);
-    try {
-      localStorage.setItem(SUBTITLE_SYNC_KEY, sync.toString());
-    } catch (error) {
-      console.error('Failed to save subtitle sync:', error);
-    }
+    // Keyboard nudges are 0.1s steps; don't store floating-point dust.
+    const rounded = Math.round(sync * 10) / 10;
+    setSubtitleSync(rounded);
+    saveSettings({ subtitleSync: rounded });
   };
 
   // Apply subtitle sync offset to cues
@@ -318,108 +319,28 @@ function WatchPageContent() {
     }
   }, [subtitleSync]);
 
-  // Save recently played show to localStorage
-  const saveRecentlyPlayed = (videoPath: string, currentTime: number, duration: number) => {
-    try {
-      const parsedInfo = parseVideoUrl(videoPath);
-      if (!parsedInfo) return;
+  // Ask the server where the user left off as soon as the video is known, so
+  // the answer is usually there by the time the metadata has loaded.
+  useEffect(() => {
+    if (!videoUrl) return;
+    progressReadyRef.current = false;
+    lastProgressSaveRef.current = 0;
+    savedProgressRef.current = { videoUrl, position: fetchProgress(videoUrl) };
+  }, [videoUrl]);
 
-      const showId = toShowId(parsedInfo.showName);
-      const percentWatched = (currentTime / duration) * 100;
-
-      // Get existing recently played list
-      const savedList = localStorage.getItem(RECENTLY_PLAYED_KEY);
-      let recentlyPlayed: any[] = savedList ? JSON.parse(savedList) : [];
-
-      // Remove existing entry for this show
-      recentlyPlayed = recentlyPlayed.filter(item => item.showId !== showId);
-
-      // Add new entry at the beginning (only if not near the end)
-      if (percentWatched < 95) {
-        recentlyPlayed.unshift({
-          showId,
-          showName: parsedInfo.showName,
-          seasonName: parsedInfo.seasonName,
-          episodeName: parsedInfo.episodeName,
-          videoPath,
-          currentTime,
-          duration,
-          percentWatched,
-          timestamp: Date.now(),
-        });
-      }
-
-      // Keep only the most recent 10 shows
-      recentlyPlayed = recentlyPlayed.slice(0, 10);
-
-      localStorage.setItem(RECENTLY_PLAYED_KEY, JSON.stringify(recentlyPlayed));
-    } catch (error) {
-      console.error('Failed to save recently played:', error);
-    }
-  };
-
-  // Save video progress to localStorage
-  const saveProgress = (videoPath: string, currentTime: number, duration: number) => {
-    try {
-      // Don't save if we're near the end (95% or more watched)
-      if (currentTime / duration >= 0.95) {
-        localStorage.removeItem(PROGRESS_KEY);
-        return;
-      }
-
-      const progress = {
-        videoPath,
-        currentTime,
-        timestamp: Date.now(),
-      };
-      localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
-
-      // Also save to recently played
-      saveRecentlyPlayed(videoPath, currentTime, duration);
-    } catch (error) {
-      console.error('Failed to save video progress:', error);
-    }
-  };
-
-  // Load video progress from localStorage
-  const loadProgress = (videoPath: string): number | null => {
-    try {
-      const saved = localStorage.getItem(PROGRESS_KEY);
-      if (!saved) return null;
-
-      const progress = JSON.parse(saved);
-
-      // Only restore if it's the same video
-      if (progress.videoPath === videoPath) {
-        return progress.currentTime;
-      }
-      return null;
-    } catch (error) {
-      console.error('Failed to load video progress:', error);
-      return null;
-    }
-  };
-
-  // Save volume to localStorage
-  const saveVolume = (volume: number) => {
-    try {
-      localStorage.setItem(VOLUME_KEY, volume.toString());
-    } catch (error) {
-      console.error('Failed to save volume:', error);
-    }
-  };
-
-  // Load volume from localStorage
-  const loadVolume = (): number | null => {
-    try {
-      const saved = localStorage.getItem(VOLUME_KEY);
-      if (!saved) return null;
-      const volume = parseFloat(saved);
-      return isNaN(volume) ? null : volume;
-    } catch (error) {
-      console.error('Failed to load volume:', error);
-      return null;
-    }
+  // Save the position to the user's account. The server also updates the
+  // continue-watching row, and clears both once the episode is 95% watched.
+  const saveProgress = (
+    videoPath: string,
+    currentTime: number,
+    duration: number,
+    { force = false, keepalive = false } = {}
+  ) => {
+    if (!progressReadyRef.current) return;
+    const now = Date.now();
+    if (!force && now - lastProgressSaveRef.current < 10_000) return;
+    lastProgressSaveRef.current = now;
+    saveProgressRemote(videoPath, currentTime, duration, { keepalive });
   };
 
   // Helper function to parse video URL
@@ -439,11 +360,6 @@ function WatchPageContent() {
       console.error('Error parsing video URL:', error);
       return null;
     }
-  };
-
-  // Helper function to convert show name to ID
-  const toShowId = (showName: string): string => {
-    return showName.toLowerCase().replace(/\s+/g, '-');
   };
 
   // Helper function to convert video path to thumbnail path
@@ -629,35 +545,51 @@ function WatchPageContent() {
         });
       }
 
-      // Restore saved volume
-      const savedVolume = loadVolume();
-      if (savedVolume !== null) {
-        video.volume = savedVolume;
-        console.log(`Restored volume: ${savedVolume}`);
+      // Restore saved volume (if the settings arrived first; otherwise the
+      // settings effect applies it when they do)
+      if (savedVolumeRef.current !== null) {
+        video.volume = savedVolumeRef.current;
       }
 
       // Restore saved progress
-      if (!progressRestored && videoUrl) {
-        const savedTime = loadProgress(videoUrl);
-        if (savedTime && savedTime > 0) {
+      const saved = savedProgressRef.current;
+      if (!videoUrl || saved?.videoUrl !== videoUrl) {
+        progressReadyRef.current = true;
+        return;
+      }
+      saved.position.then(savedTime => {
+        // Ignore the answer if the player has moved on to another episode.
+        if (savedProgressRef.current !== saved) return;
+        if (!progressRestored && savedTime && savedTime > 0) {
           video.currentTime = savedTime;
           console.log(`Restored video progress: ${savedTime}s`);
         }
         setProgressRestored(true);
-      }
+        progressReadyRef.current = true;
+      });
     };
 
     const handleTimeUpdate = () => {
-      // Save progress every few seconds
+      // Save progress every few seconds (throttled in saveProgress)
       if (video.duration && videoUrl) {
         saveProgress(videoUrl, video.currentTime, video.duration);
       }
     };
 
+    // Save right away when playback stops or the page goes away, so the last
+    // few seconds aren't lost to the throttle.
+    const saveNow = (keepalive: boolean) => {
+      if (video.duration && videoUrl) {
+        saveProgress(videoUrl, video.currentTime, video.duration, { force: true, keepalive });
+      }
+    };
+    const handlePause = () => saveNow(false);
+    const handlePageHide = () => saveNow(true);
+
     const handleEnded = () => {
-      // Clear progress when video finishes
-      if (videoUrl) {
-        localStorage.removeItem(PROGRESS_KEY);
+      // Finished: the server clears the progress and the continue-watching entry
+      if (videoUrl && video.duration) {
+        saveProgress(videoUrl, video.duration, video.duration, { force: true });
       }
 
       // Autoplay next episode
@@ -673,8 +605,12 @@ function WatchPageContent() {
     };
 
     const handleVolumeChange = () => {
-      // Save volume whenever it changes
-      saveVolume(video.volume);
+      // Save volume whenever the user changes it (not while the saved value
+      // is still on its way from the server)
+      if (settingsLoadedRef.current && video.volume !== savedVolumeRef.current) {
+        savedVolumeRef.current = video.volume;
+        saveSettings({ volume: video.volume });
+      }
     };
 
     window.addEventListener('keydown', handleKeyPress);
@@ -682,6 +618,8 @@ function WatchPageContent() {
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('ended', handleEnded);
     video.addEventListener('volumechange', handleVolumeChange);
+    video.addEventListener('pause', handlePause);
+    window.addEventListener('pagehide', handlePageHide);
 
     return () => {
       window.removeEventListener('keydown', handleKeyPress);
@@ -689,6 +627,11 @@ function WatchPageContent() {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('ended', handleEnded);
       video.removeEventListener('volumechange', handleVolumeChange);
+      video.removeEventListener('pause', handlePause);
+      window.removeEventListener('pagehide', handlePageHide);
+      // Leaving the player inside the app (back button, next episode) is not
+      // a pagehide, so save here too.
+      saveNow(true);
     };
   }, [videoUrl, progressRestored, showData, currentSeasonIndex, currentEpisodeIndex, router, subtitleSync]);
 
