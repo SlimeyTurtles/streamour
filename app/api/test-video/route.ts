@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { resolveMediaPath } from '@/lib/media-path';
+import { requireSession } from '@/lib/auth';
 
 // Debug endpoint to test video serving
 // Access at: /api/test-video
 // Or with file: /api/test-video?file=Rick%20and%20Morty/Season%201/01%20-%20Pilot.mp4
 
 export async function GET(request: NextRequest) {
+  const auth = await requireSession();
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+
   const file = request.nextUrl.searchParams.get('file');
   const userAgent = request.headers.get('user-agent') || '';
 

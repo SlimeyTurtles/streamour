@@ -12,6 +12,18 @@ export interface ChangelogEntry {
 // Newest first. The first entry's version is the current site version.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.3.0',
+    date: '2026-11-18',
+    title: 'Real sign-in sessions',
+    changes: {
+      changed: [
+        'Signing in now creates a personal session that lasts 30 days from your last visit; you will be asked to sign in once after this update',
+        'Signing out ends the session on the server, not just in the browser',
+      ],
+      fixed: ['An expired sign-in now takes you back to the login page instead of an empty library'],
+    },
+  },
+  {
     version: '1.2.3',
     date: '2026-11-18',
     title: 'Streaming for new MKV episodes',

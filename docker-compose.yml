@@ -15,6 +15,12 @@ services:
       - MEDIA_DIR=/media
       # Inside the compose network the database host is "postgres".
       - DATABASE_URL=postgresql://streamour:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/streamour
+      # First owner account, created at the first sign-in.
+      - OWNER_EMAIL=${OWNER_EMAIL:-}
+      # Transitional: AUTH_PASSWORD signs in as the owner while this is not "false".
+      - LEGACY_PASSWORD_LOGIN=${LEGACY_PASSWORD_LOGIN:-true}
+      # Set to "true" only when serving over plain HTTP (cookies lose Secure).
+      - COOKIE_INSECURE=${COOKIE_INSECURE:-}
       # Outbound email (lib/mail.ts). "log" prints emails to the container log.
       - MAIL_PROVIDER=${MAIL_PROVIDER:-log}
       - RESEND_API_KEY=${RESEND_API_KEY:-}

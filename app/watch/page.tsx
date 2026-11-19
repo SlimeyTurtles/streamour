@@ -505,6 +505,11 @@ function WatchPageContent() {
 
         // Fetch all shows
         const response = await fetch('/api/shows');
+        if (response.status === 401) {
+          // Session expired or revoked; sign in again.
+          window.location.href = '/login';
+          return;
+        }
         if (!response.ok) throw new Error('Failed to fetch shows');
 
         const shows: Show[] = await response.json();

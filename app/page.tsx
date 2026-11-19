@@ -129,6 +129,15 @@ export default function Home() {
   const fetchShows = async () => {
     try {
       const response = await fetch('/api/shows');
+      if (response.status === 401) {
+        // Session expired or revoked: the cookie is still there, so the
+        // middleware let the page through. Go sign in again.
+        window.location.href = '/login';
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch shows (${response.status})`);
+      }
       const data = await response.json();
       setShows(data);
     } catch (error) {

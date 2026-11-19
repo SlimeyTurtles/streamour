@@ -5,6 +5,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { resolveMediaPath } from '@/lib/media-path';
 import { hlsCacheDir, legacyHlsDir } from '@/lib/cache';
+import { requireSession } from '@/lib/auth';
 
 // The only files this route serves from an HLS directory.
 const HLS_FILE_PATTERN = /^(playlist\.m3u8|segment\d+\.ts)$/;
@@ -238,6 +239,11 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
+    const auth = await requireSession();
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
     const { path: pathSegments } = await params;
 
     if (pathSegments.length < 2) {
