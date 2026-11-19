@@ -12,6 +12,16 @@ export interface ChangelogEntry {
 // Newest first. The first entry's version is the current site version.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.3',
+    date: '2026-11-18',
+    title: 'Streaming for new MKV episodes',
+    changes: {
+      fixed: [
+        'MKV episodes that were never pre-encoded can now be prepared for streaming on first play',
+      ],
+    },
+  },
+  {
     version: '1.2.2',
     date: '2026-11-18',
     title: 'Security fix',
