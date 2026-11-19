@@ -49,6 +49,8 @@ streamour/
 │   ├── schema.prisma             # Database schema (users, sessions, watch_progress, recently_played, settings)
 │   └── migrations/               # Applied by docker-entrypoint.sh on container start
 ├── tools/                        # Utility scripts
+│   ├── backup-db.sh              # Nightly pg_dump to the RAID (cron on the server), 14 days kept
+│   ├── restore-db.sh             # Restore a dump (defaults to staging's database)
 │   ├── convert-srt-to-vtt.py     # Convert SRT subtitles to VTT
 │   ├── convert-videos.sh         # Video conversion helper
 │   ├── fix-mobile-streaming.py   # Mobile compatibility fixes
@@ -128,6 +130,10 @@ edit an applied migration. The container applies pending migrations on start
 (`docker-entrypoint.sh`), so deploying a branch with a migration is self-contained.
 Production and staging have separate Postgres containers and volumes; staging's is
 deleted at teardown.
+
+Backups: cron on the server runs `tools/backup-db.sh` nightly (installed by the
+Deploy production workflow); dumps go to `/mnt/storage/backups/streamour`, 14 days
+kept. Restore with `tools/restore-db.sh`; runbook on the wiki's Home Server page.
 
 ## API Routes
 
