@@ -25,6 +25,9 @@ model User {
   // Null for accounts that only sign in through another identity (e.g. Google).
   passwordHash    String?   @map("password_hash")
   role            Role      @default(MEMBER)
+  // Set when an owner disables the account: it can't sign in and its sessions
+  // are revoked, but its progress is kept in case it is re-enabled.
+  disabledAt      DateTime? @map("disabled_at")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   sessions       Session[]

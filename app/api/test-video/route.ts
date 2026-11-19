@@ -3,14 +3,14 @@ import fs from 'fs/promises';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { resolveMediaPath } from '@/lib/media-path';
-import { requireSession } from '@/lib/auth';
+import { requireOwner } from '@/lib/auth';
 
-// Debug endpoint to test video serving
+// Debug endpoint to test video serving (owners only)
 // Access at: /api/test-video
 // Or with file: /api/test-video?file=Rick%20and%20Morty/Season%201/01%20-%20Pilot.mp4
 
 export async function GET(request: NextRequest) {
-  const auth = await requireSession();
+  const auth = await requireOwner();
   if (auth instanceof NextResponse) {
     return auth;
   }
