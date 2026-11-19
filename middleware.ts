@@ -10,8 +10,8 @@ export function middleware(request: NextRequest) {
     console.log(`[${timestamp}] ${request.method} ${pathname}`);
   }
 
-  // Allow access to login page, auth API, and media files
-  if (pathname === '/login' || pathname.startsWith('/api/auth') || pathname.startsWith('/api/media')) {
+  // Allow access to login page, auth API, media files and the health check
+  if (pathname === '/login' || pathname === '/api/health' || pathname.startsWith('/api/auth') || pathname.startsWith('/api/media')) {
     return NextResponse.next();
   }
 

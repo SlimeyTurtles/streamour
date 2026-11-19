@@ -14,6 +14,7 @@ A personal media streaming service built with Next.js. Netflix-like experience f
 - **React**: 19.2.3
 - **Styling**: Tailwind CSS 4
 - **Language**: TypeScript 5
+- **Database**: Postgres 16 (second container in the compose project) via Prisma 6
 
 ## Project Structure
 
@@ -22,6 +23,7 @@ streamour/
 ├── app/
 │   ├── api/
 │   │   ├── auth/login/route.ts   # POST: login, DELETE: logout
+│   │   ├── health/route.ts       # GET: public liveness + DB check (deploy smoke tests)
 │   │   ├── media/[...path]/route.ts  # Serves media files with range requests
 │   │   ├── shows/route.ts        # GET: scans media folder, returns show list
 │   │   └── test-video/route.ts   # Test endpoint
@@ -30,6 +32,12 @@ streamour/
 │   ├── watch/page.tsx            # Video player with progress tracking
 │   ├── layout.tsx                # Root layout
 │   └── page.tsx                  # Home page with show grid + continue watching
+├── lib/
+│   ├── changelog.ts              # Drives /updates
+│   └── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
+├── prisma/
+│   ├── schema.prisma             # Database schema (users, sessions)
+│   └── migrations/               # Applied by docker-entrypoint.sh on container start
 ├── tools/                        # Utility scripts
 │   ├── convert-srt-to-vtt.py     # Convert SRT subtitles to VTT
 │   ├── convert-videos.sh         # Video conversion helper
@@ -38,6 +46,7 @@ streamour/
 │   └── generate-thumbnails.py    # Generate episode thumbnails
 ├── middleware.ts                 # Auth middleware (cookie check)
 ├── server.js                     # Dev server wrapper with timestamps
+├── docker-entrypoint.sh          # `prisma migrate deploy`, then starts the app
 └── media/                        # Default media directory
 ```
 
@@ -74,7 +83,20 @@ Create `.env.local`:
 ```
 AUTH_PASSWORD=your_password_here
 MEDIA_DIR=/path/to/media   # Optional, defaults to ./media
+DATABASE_URL=postgresql://streamour:<POSTGRES_PASSWORD>@localhost:5436/streamour
 ```
+
+For local dev, start the database with `docker compose up -d postgres` (needs
+`POSTGRES_PASSWORD` in `.env`). In Docker, compose builds `DATABASE_URL` itself.
+
+## Database
+
+Postgres + Prisma. Schema changes: edit `prisma/schema.prisma`, run
+`npm run db:migrate -- --name what_changed`, commit the generated migration. Never
+edit an applied migration. The container applies pending migrations on start
+(`docker-entrypoint.sh`), so deploying a branch with a migration is self-contained.
+Production and staging have separate Postgres containers and volumes; staging's is
+deleted at teardown.
 
 ## API Routes
 
@@ -83,6 +105,7 @@ MEDIA_DIR=/path/to/media   # Optional, defaults to ./media
 | `/api/auth/login` | POST | Login with `{ password }` |
 | `/api/auth/login` | DELETE | Logout (clears cookie) |
 | `/api/shows` | GET | List all shows with seasons/episodes |
+| `/api/health` | GET | Public; 200 when the app is up and can reach the database |
 | `/api/media/[...path]` | GET/HEAD | Serve media files (range support) |
 
 ## Video Player Features
@@ -123,6 +146,8 @@ npm run dev    # Start dev server (uses server.js wrapper)
 npm run build  # Production build
 npm run start  # Production server
 npm run lint   # ESLint
+npm run db:migrate -- --name x   # Create + apply a migration after a schema change
+npm run db:deploy                # Apply pending migrations
 ```
 
 ## Supported Formats
