@@ -11,6 +11,10 @@ services:
     restart: "no"
     ports: !override
       - "3005:3000"
+    environment:
+      # Staging starts from a copy of production's .env; never send real email
+      # from it, whatever that file says.
+      - MAIL_PROVIDER=log
 
   postgres:
     container_name: streamour-staging-postgres

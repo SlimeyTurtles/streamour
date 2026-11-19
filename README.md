@@ -151,6 +151,10 @@ npm run db:studio                           # Browse the database
 | `MEDIA_DIR` | `.env.local` | Media path for `npm run dev`; defaults to `./media` |
 | `POSTGRES_PASSWORD` | `.env` | Password for the bundled Postgres container (required for Docker) |
 | `POSTGRES_PORT` | `.env` | Host-local port for Postgres; defaults to `5436` |
+| `MAIL_PROVIDER` | `.env`, `.env.local` | `log` (default) prints emails to the server log; `resend` sends them. Staging is always `log`. |
+| `RESEND_API_KEY` | `.env` | Resend API key; required when `MAIL_PROVIDER=resend` |
+| `MAIL_FROM` | `.env` | From address; defaults to `Streamour <no-reply@streamour.net>`. The domain must be verified in Resend. |
+| `APP_URL` | `.env`, `.env.local` | Public base URL for links in emails; defaults to `http://localhost:3000` |
 | `DATABASE_URL` | `.env.local` | Postgres connection string for `npm run dev`. In Docker it is built from `POSTGRES_PASSWORD` by compose. |
 
 ## Media Structure

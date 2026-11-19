@@ -15,6 +15,12 @@ services:
       - MEDIA_DIR=/media
       # Inside the compose network the database host is "postgres".
       - DATABASE_URL=postgresql://streamour:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/streamour
+      # Outbound email (lib/mail.ts). "log" prints emails to the container log.
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-log}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - MAIL_FROM=${MAIL_FROM:-Streamour <no-reply@streamour.net>}
+      # Public base URL, used for links in emails.
+      - APP_URL=${APP_URL:-http://localhost:3000}
     volumes:
       - ${MEDIA_PATH:?MEDIA_PATH is required}:/media:ro
     healthcheck:
