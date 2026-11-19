@@ -34,7 +34,9 @@ streamour/
 │   └── page.tsx                  # Home page with show grid + continue watching
 ├── lib/
 │   ├── changelog.ts              # Drives /updates
-│   └── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
+│   ├── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
+│   ├── mail.ts                   # sendMail() over a provider (log | resend)
+│   └── mail-templates.ts         # invite, verify email, code, new sign-in
 ├── prisma/
 │   ├── schema.prisma             # Database schema (users, sessions)
 │   └── migrations/               # Applied by docker-entrypoint.sh on container start
@@ -88,6 +90,11 @@ DATABASE_URL=postgresql://streamour:<POSTGRES_PASSWORD>@localhost:5436/streamour
 
 For local dev, start the database with `docker compose up -d postgres` (needs
 `POSTGRES_PASSWORD` in `.env`). In Docker, compose builds `DATABASE_URL` itself.
+
+Email (`lib/mail.ts`): `MAIL_PROVIDER=log` (default; prints to the server log, and
+staging is pinned to it) or `resend` (needs `RESEND_API_KEY`, `MAIL_FROM`). `APP_URL`
+is the public base URL for links in emails. All outbound email goes through
+`sendMail()`; don't call a provider directly.
 
 ## Database
 
