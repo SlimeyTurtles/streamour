@@ -8,6 +8,15 @@ import {
   OwnerNotConfiguredError,
   safeEqual,
 } from '@/lib/auth';
+import {
+  clearAttempts,
+  clientIp,
+  LOGIN_PER_ACCOUNT,
+  LOGIN_PER_IP,
+  recordAttempt,
+  retryAfterSeconds,
+  tooManyRequests,
+} from '@/lib/rate-limit';
 
 // POST { password }: sign in.
 //
@@ -33,9 +42,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Only wrong passwords count, so normal use never gets near the limits.
+  // The shared password is one account ("legacy") for the per-account limit.
+  const ipKey = `login:ip:${clientIp(request.headers)}`;
+  const accountKey = 'login:account:legacy';
+  const retryAfter = Math.max(
+    retryAfterSeconds(ipKey, LOGIN_PER_IP),
+    retryAfterSeconds(accountKey, LOGIN_PER_ACCOUNT)
+  );
+  if (retryAfter > 0) {
+    return tooManyRequests(retryAfter);
+  }
+
   if (!safeEqual(password, sharedPassword)) {
+    recordAttempt(ipKey, LOGIN_PER_IP);
+    recordAttempt(accountKey, LOGIN_PER_ACCOUNT);
     return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
   }
+  clearAttempts(ipKey);
 
   try {
     const owner = await ensureOwner();
