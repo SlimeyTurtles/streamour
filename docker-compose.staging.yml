@@ -1,6 +1,9 @@
 # Override for the throwaway staging instance. Use together with the base file:
 #   docker compose -p streamour-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --build
 # Deployed by .github/workflows/deploy-staging.yml; torn down automatically.
+#
+# Staging gets its own Postgres: the project name (-p streamour-staging) gives it
+# a separate db_data volume, so migrations on a branch never touch production data.
 services:
   streamour:
     container_name: streamour-staging
@@ -8,3 +11,9 @@ services:
     restart: "no"
     ports: !override
       - "3005:3000"
+
+  postgres:
+    container_name: streamour-staging-postgres
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:5437:5432"

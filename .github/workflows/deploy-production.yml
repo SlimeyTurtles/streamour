@@ -50,6 +50,17 @@ jobs:
             --exclude='media/' \
             "${{ github.workspace }}/" "$DEPLOY_DIR/"
 
+      - name: Ensure database password
+        # First deploy with the Postgres container: generate a password into
+        # the box-only .env. Never regenerated afterwards (the database volume
+        # is initialised with it).
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          if ! grep -q '^POSTGRES_PASSWORD=' .env; then
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> .env
+            echo "generated POSTGRES_PASSWORD"
+          fi
+
       - name: Build + restart
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose -p streamour up -d --build
@@ -57,11 +68,17 @@ jobs:
       - name: Smoke test
         working-directory: ${{ env.DEPLOY_DIR }}
         run: |
-          # Give the container a few seconds to bind the port, then make
-          # sure it responds. Unauthenticated requests to / redirect to
-          # /login, so a 200 or 307 both mean "alive."
-          sleep 5
+          # The container applies database migrations before it starts
+          # listening, so poll instead of sleeping. /api/health returns 200
+          # only when the app is up and can reach the database.
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${PORT}/api/health" || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
           docker compose -p streamour ps
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${PORT}/")
           echo "status: $code"
-          case "$code" in 200|307) echo "ok"; exit 0 ;; *) echo "unexpected"; exit 1 ;; esac
+          if [ "$code" != "200" ]; then
+            docker compose -p streamour logs --tail 50 streamour
+            exit 1
+          fi
