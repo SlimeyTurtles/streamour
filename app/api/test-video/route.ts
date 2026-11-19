@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import { resolveMediaPath } from '@/lib/media-path';
 import { requireSession } from '@/lib/auth';
 
@@ -58,11 +59,18 @@ export async function GET(request: NextRequest) {
       // Check moov atom position for mp4 files
       if (ext === '.mp4') {
         try {
-          const { execSync } = require('child_process');
-          const probe = execSync(
-            `ffprobe -v trace "${filePath}" 2>&1 | grep -E "type:'(moov|mdat)'" | head -2`,
-            { encoding: 'utf-8', timeout: 5000 }
-          );
+          // No shell: the path is passed as an argument, never interpolated
+          // into a command line. ffprobe's trace output goes to stderr.
+          const { stderr } = spawnSync('ffprobe', ['-v', 'trace', filePath], {
+            encoding: 'utf-8',
+            timeout: 5000,
+            maxBuffer: 64 * 1024 * 1024,
+          });
+          const probe = (stderr || '')
+            .split('\n')
+            .filter(line => /type:'(moov|mdat)'/.test(line))
+            .slice(0, 2)
+            .join('\n');
 
           const moovMatch = probe.match(/type:'moov'.*?(\d+)\s+\d+$/m);
           const mdatMatch = probe.match(/type:'mdat'.*?(\d+)\s+\d+$/m);
