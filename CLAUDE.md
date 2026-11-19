@@ -42,6 +42,7 @@ streamour/
 │   ├── episode-key.ts            # Episode key = media-relative path; shared by browser and server
 │   ├── watch-state.ts            # Server: progress, continue-watching, player settings, legacy import
 │   ├── me-client.ts              # Browser: calls /api/me/*; the pages use this, never localStorage
+│   ├── users.ts                  # Roles and disabling: the rules (pure, tested) and setRole()/setDisabled()
 │   ├── rate-limit.ts             # In-memory attempt counters for sign-in/code endpoints (429 + Retry-After)
 │   ├── mail.ts                   # sendMail() over a provider (log | resend)
 │   └── mail-templates.ts         # invite, verify email, code, new sign-in
@@ -56,6 +57,7 @@ streamour/
 │   ├── fix-mobile-streaming.py   # Mobile compatibility fixes
 │   ├── generate-subtitles.py     # Auto-generate subtitles
 │   └── generate-thumbnails.py    # Generate episode thumbnails
+├── instrumentation.ts            # Server start: creates the first owner from OWNER_EMAIL
 ├── middleware.ts                 # First gate: redirects to /login when there is no session cookie
 ├── server.js                     # Dev server wrapper with timestamps
 ├── docker-entrypoint.sh          # `prisma migrate deploy`, then starts the app
@@ -107,6 +109,12 @@ cannot verify it. **Every API route that returns data must start with
 `requireSession()`** (returns the session + user, or a 401 response to return as-is).
 `LEGACY_PASSWORD_LOGIN` (default on) lets `AUTH_PASSWORD` sign in as the owner;
 `COOKIE_INSECURE=true` is only for plain-HTTP environments (staging sets it).
+
+Roles: `OWNER` and `MEMBER`, plus `users.disabled_at` (a disabled account can't sign
+in and its sessions are revoked). Owner-only routes call `requireOwner()` from
+`lib/auth.ts`; never check `user.role` inline. Role changes and disabling go through
+`lib/users.ts`, which refuses to demote or disable the last owner or to disable
+yourself.
 
 Email (`lib/mail.ts`): `MAIL_PROVIDER=log` (default; prints to the server log, and
 staging is pinned to it) or `resend` (needs `RESEND_API_KEY`, `MAIL_FROM`). `APP_URL`
@@ -187,6 +195,7 @@ npm run dev    # Start dev server (uses server.js wrapper)
 npm run build  # Production build
 npm run start  # Production server
 npm run lint   # ESLint
+npm test       # Vitest unit tests (lib/*.test.ts)
 npm run db:migrate -- --name x   # Create + apply a migration after a schema change
 npm run db:deploy                # Apply pending migrations
 ```

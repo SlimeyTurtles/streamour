@@ -102,6 +102,13 @@ export async function getSession(): Promise<AuthSession | null> {
 
   const { user, ...session } = found;
 
+  // Disabling an account revokes its sessions (lib/users.ts); this covers a
+  // session created in the same instant.
+  if (user.disabledAt) {
+    await db.session.deleteMany({ where: { userId: user.id } });
+    return null;
+  }
+
   if (now - session.lastSeenAt.getTime() > REFRESH_AFTER_MS) {
     const expiresAt = new Date(now + SESSION_TTL_MS);
     await db.session.update({
@@ -125,6 +132,23 @@ export async function requireSession(): Promise<AuthSession | NextResponse> {
   const auth = await getSession();
   if (!auth) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+  return auth;
+}
+
+/**
+ * For owner-only route handlers: the owner's session, or the response to
+ * return as-is (401 when not signed in, 403 when signed in as a member).
+ * Every owner-only route must go through this, so there is one place that
+ * decides what an owner is.
+ */
+export async function requireOwner(): Promise<AuthSession | NextResponse> {
+  const auth = await requireSession();
+  if (auth instanceof NextResponse) {
+    return auth;
+  }
+  if (auth.user.role !== 'OWNER') {
+    return NextResponse.json({ error: 'Owners only' }, { status: 403 });
   }
   return auth;
 }
@@ -161,12 +185,13 @@ export class OwnerNotConfiguredError extends Error {
 }
 
 /**
- * The first owner account. Created from OWNER_EMAIL the first time it is
- * needed; after that the existing owner is returned, whatever OWNER_EMAIL says.
+ * The first owner account. Created from OWNER_EMAIL when the server starts
+ * (instrumentation.ts) or, failing that, at the first sign-in; after that the
+ * oldest enabled owner is returned, whatever OWNER_EMAIL says.
  */
 export async function ensureOwner(): Promise<User> {
   const existing = await db.user.findFirst({
-    where: { role: 'OWNER' },
+    where: { role: 'OWNER', disabledAt: null },
     orderBy: { createdAt: 'asc' },
   });
   if (existing) {
@@ -181,7 +206,7 @@ export async function ensureOwner(): Promise<User> {
   // upsert so two first sign-ins racing each other end up with one owner.
   return db.user.upsert({
     where: { email },
-    update: { role: 'OWNER' },
+    update: { role: 'OWNER', disabledAt: null },
     create: { email, displayName: 'Owner', role: 'OWNER' },
   });
 }
