@@ -38,6 +38,7 @@ streamour/
 │   ├── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
 │   ├── media-path.ts             # getMediaDir(), resolveMediaPath(): URL segments → path inside the media folder
 │   ├── cache.ts                  # Paths in the writable cache (HLS, thumbnails)
+│   ├── rate-limit.ts             # In-memory attempt counters for sign-in/code endpoints (429 + Retry-After)
 │   ├── mail.ts                   # sendMail() over a provider (log | resend)
 │   └── mail-templates.ts         # invite, verify email, code, new sign-in
 ├── prisma/
