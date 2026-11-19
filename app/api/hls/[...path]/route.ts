@@ -3,11 +3,10 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import { resolveMediaPath } from '@/lib/media-path';
 
-function getMediaDir(): string {
-  const mediaDir = process.env.MEDIA_DIR || 'media';
-  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
-}
+// The only files this route serves from an HLS directory.
+const HLS_FILE_PATTERN = /^(playlist\.m3u8|segment\d+\.ts)$/;
 
 // Get HLS directory for a video file (stored alongside the MKV)
 function getHlsDir(videoPath: string): string {
@@ -236,7 +235,10 @@ export async function GET(
     // Check if this is a progress request
     if (pathSegments[pathSegments.length - 1] === 'progress') {
       const videoPathSegments = pathSegments.slice(0, -1);
-      const videoPath = path.join(getMediaDir(), ...videoPathSegments.map(decodeURIComponent));
+      const videoPath = resolveMediaPath(videoPathSegments);
+      if (!videoPath) {
+        return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+      }
       const hlsDir = getHlsDir(videoPath);
 
       try {
@@ -253,11 +255,17 @@ export async function GET(
     const requestedFile = pathSegments[pathSegments.length - 1];
     // Everything else is the video path
     const videoPathSegments = pathSegments.slice(0, -1);
-    const videoPath = path.join(getMediaDir(), ...videoPathSegments.map(decodeURIComponent));
+    const videoPath = resolveMediaPath(videoPathSegments);
+    if (!videoPath || !HLS_FILE_PATTERN.test(requestedFile)) {
+      return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+    }
 
-    // Verify video exists
+    // Verify the source is a video file (never generate HLS from anything else)
     try {
-      await fs.stat(videoPath);
+      const videoStat = await fs.stat(videoPath);
+      if (!videoStat.isFile() || !/\.(mkv|mp4)$/i.test(videoPath)) {
+        return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+      }
     } catch {
       return NextResponse.json({ error: 'Video not found' }, { status: 404 });
     }
