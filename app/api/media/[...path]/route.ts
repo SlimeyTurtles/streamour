@@ -48,6 +48,12 @@ async function getVideoDuration(filePath: string): Promise<number> {
   });
 }
 
+// The parts of an ffprobe stream entry this route reads.
+interface FfprobeStream {
+  index: number;
+  tags?: { language?: string; title?: string };
+}
+
 interface SubtitleTrack {
   index: number;
   language: string;
@@ -77,7 +83,7 @@ async function getSubtitleTracks(filePath: string): Promise<SubtitleTrack[]> {
       }
       try {
         const data = JSON.parse(output);
-        const tracks: SubtitleTrack[] = (data.streams || []).map((s: any) => ({
+        const tracks: SubtitleTrack[] = (data.streams || []).map((s: FfprobeStream) => ({
           index: s.index,
           language: s.tags?.language || 'und',
           title: s.tags?.title || '',

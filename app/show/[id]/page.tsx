@@ -76,6 +76,14 @@ export default function ShowDetailPage() {
   const [thumbnailError, setThumbnailError] = useState(false);
   const [startThumbnailError, setStartThumbnailError] = useState(false);
 
+  const loadRecentlyPlayedForShow = async (currentShowId: string) => {
+    const recentlyPlayed = await fetchRecentlyPlayed();
+    const episode = recentlyPlayed.find(item => item.showId === currentShowId);
+    if (episode) {
+      setRecentlyPlayedEpisode(episode);
+    }
+  };
+
   useEffect(() => {
     fetch('/api/shows')
       .then(res => {
@@ -102,14 +110,6 @@ export default function ShowDetailPage() {
         setLoading(false);
       });
   }, [showId]);
-
-  const loadRecentlyPlayedForShow = async (currentShowId: string) => {
-    const recentlyPlayed = await fetchRecentlyPlayed();
-    const episode = recentlyPlayed.find(item => item.showId === currentShowId);
-    if (episode) {
-      setRecentlyPlayedEpisode(episode);
-    }
-  };
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
