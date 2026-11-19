@@ -49,12 +49,12 @@ jobs:
         run: |
           mkdir -p "$DEPLOY_DIR"
           rsync -az --delete \
-            --exclude='.env' \
-            --exclude='.env*.local' \
-            --exclude='.git/' \
-            --exclude='node_modules/' \
-            --exclude='.next/' \
-            --exclude='media/' \
+            --exclude='/.env' \
+            --exclude='/.env*.local' \
+            --exclude='/.git/' \
+            --exclude='/node_modules/' \
+            --exclude='/.next/' \
+            --exclude='/media/' \
             "${{ github.workspace }}/" "$DEPLOY_DIR/"
 
       - name: Ensure staging .env
