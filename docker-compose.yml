@@ -23,6 +23,9 @@ services:
       - APP_URL=${APP_URL:-http://localhost:3000}
     volumes:
       - ${MEDIA_PATH:?MEDIA_PATH is required}:/media:ro
+      # Generated HLS and thumbnails. A named volume by default; set CACHE_PATH
+      # to a host directory (writable by uid 1001) to keep it on a bigger disk.
+      - ${CACHE_PATH:-cache}:/cache
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -52,3 +55,4 @@ services:
 
 volumes:
   db_data:
+  cache:

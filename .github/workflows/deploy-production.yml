@@ -63,6 +63,28 @@ jobs:
             echo "generated POSTGRES_PASSWORD"
           fi
 
+      - name: Check cache directory
+        # Generated HLS is about as large as the source videos, so production
+        # must keep /cache off the small root disk: CACHE_PATH in the box-only
+        # .env has to point at a directory the container user (uid 1001) can
+        # write to. Fail here, before anything is rebuilt, if it doesn't.
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          cache_path=$(grep -E '^CACHE_PATH=' .env | tail -1 | cut -d= -f2-)
+          if [ -z "$cache_path" ]; then
+            echo "::error::CACHE_PATH is not set in $DEPLOY_DIR/.env (see the Deploying wiki page)"
+            exit 1
+          fi
+          if [ ! -d "$cache_path" ]; then
+            echo "::error::CACHE_PATH=$cache_path does not exist"
+            exit 1
+          fi
+          if ! docker run --rm -u 1001 -v "$cache_path":/cache alpine sh -c 'touch /cache/.write-test && rm /cache/.write-test'; then
+            echo "::error::CACHE_PATH=$cache_path is not writable by uid 1001 (sudo chown 1001:1001 it)"
+            exit 1
+          fi
+          echo "cache: $cache_path"
+
       - name: Build + restart
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose -p streamour up -d --build

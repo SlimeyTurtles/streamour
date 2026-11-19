@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import { existsSync } from 'fs';
 import { resolveMediaPath } from '@/lib/media-path';
+import { thumbnailCachePath } from '@/lib/cache';
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
 
@@ -417,9 +419,19 @@ export async function GET(
 ) {
   try {
     const { path: pathSegments } = await params;
-    const filePath = resolveMediaPath(pathSegments);
-    if (!filePath) {
+    const mediaPath = resolveMediaPath(pathSegments);
+    if (!mediaPath) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
+
+    // Images: a generated thumbnail in the cache volume wins over (and stands
+    // in for) a file next to the source.
+    let filePath = mediaPath;
+    if (/\.(jpe?g|png)$/i.test(mediaPath)) {
+      const cachedPath = thumbnailCachePath(mediaPath);
+      if (existsSync(cachedPath)) {
+        filePath = cachedPath;
+      }
     }
 
     let stat;

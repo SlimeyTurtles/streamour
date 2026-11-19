@@ -15,6 +15,10 @@ services:
       # Staging starts from a copy of production's .env; never send real email
       # from it, whatever that file says.
       - MAIL_PROVIDER=log
+    volumes:
+      # Staging's own throwaway cache (removed at teardown), never production's
+      # CACHE_PATH from the copied .env.
+      - cache:/cache
 
   postgres:
     container_name: streamour-staging-postgres

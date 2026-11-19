@@ -4,14 +4,11 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { resolveMediaPath } from '@/lib/media-path';
+import { hlsCacheDir, legacyHlsDir } from '@/lib/cache';
 
 // The only files this route serves from an HLS directory.
 const HLS_FILE_PATTERN = /^(playlist\.m3u8|segment\d+\.ts)$/;
 
-// Get HLS directory for a video file (stored alongside the MKV)
-function getHlsDir(videoPath: string): string {
-  return videoPath + '.hls';
-}
 
 // Get video codec using ffprobe
 async function getVideoCodec(filePath: string): Promise<string> {
@@ -181,6 +178,21 @@ async function isHlsReady(outputDir: string, videoPath: string): Promise<boolean
   }
 }
 
+// Pick the HLS directory for a video: the cache copy if it is complete, else a
+// complete legacy copy next to the source (generated before the cache volume
+// existed), else the cache location, which is where new output is generated.
+async function getHlsDir(videoPath: string): Promise<string> {
+  const cacheDir = hlsCacheDir(videoPath);
+  if (await isHlsReady(cacheDir, videoPath)) {
+    return cacheDir;
+  }
+  const legacyDir = legacyHlsDir(videoPath);
+  if (await isHlsReady(legacyDir, videoPath)) {
+    return legacyDir;
+  }
+  return cacheDir;
+}
+
 // Track ongoing HLS generation to prevent duplicate work
 const hlsGenerationInProgress = new Map<string, Promise<void>>();
 
@@ -239,7 +251,7 @@ export async function GET(
       if (!videoPath) {
         return NextResponse.json({ error: 'Video not found' }, { status: 404 });
       }
-      const hlsDir = getHlsDir(videoPath);
+      const hlsDir = await getHlsDir(videoPath);
 
       try {
         await fs.stat(videoPath);
@@ -270,8 +282,8 @@ export async function GET(
       return NextResponse.json({ error: 'Video not found' }, { status: 404 });
     }
 
-    // Get HLS output directory for this video (stored alongside the MKV)
-    const hlsDir = getHlsDir(videoPath);
+    // HLS directory for this video (cache volume, or a complete legacy copy)
+    const hlsDir = await getHlsDir(videoPath);
 
     // Check if HLS needs to be generated
     const ready = await isHlsReady(hlsDir, videoPath);
@@ -286,6 +298,11 @@ export async function GET(
           hlsGenerationInProgress.delete(videoPath);
         });
         hlsGenerationInProgress.set(videoPath, generationPromise);
+        // Segment requests don't await the promise; without a handler a failed
+        // run (unwritable cache, ffmpeg error) is an unhandled rejection.
+        generationPromise.catch((err) => {
+          console.error(`HLS generation failed for ${videoPath}:`, err);
+        });
       }
 
       // If requesting playlist, wait for generation to complete

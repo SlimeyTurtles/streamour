@@ -49,3 +49,6 @@ __pycache__/
 /tools/__pycache__
 # local clone of the GitHub wiki
 /.wiki
+
+# generated HLS/thumbnails in development (CACHE_DIR default)
+/.cache

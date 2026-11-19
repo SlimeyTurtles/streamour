@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import { existsSync } from 'fs';
 import { getMediaDir } from '@/lib/media-path';
+import { thumbnailCachePath } from '@/lib/cache';
 
 export interface Show {
   id: string;
@@ -89,6 +91,17 @@ async function scanMediaFolder(): Promise<Show[]> {
           } catch (error) {
             console.error(`Error scanning season ${item.name}:`, error);
           }
+        }
+      }
+
+      // No poster next to the source: use a generated one from the cache volume.
+      // The media route serves it from there under the same URL.
+      if (!show.thumbnail) {
+        const generated = ['thumbnail.jpg', 'thumbnail.png'].find(name =>
+          existsSync(thumbnailCachePath(path.join(showPath, name)))
+        );
+        if (generated) {
+          show.thumbnail = `/api/media/${encodeURIComponent(entry.name)}/${encodeURIComponent(generated)}`;
         }
       }
 
