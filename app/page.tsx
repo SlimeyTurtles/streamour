@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { currentVersion } from '@/lib/changelog';
+import { fetchRecentlyPlayed } from '@/lib/me-client';
 
 interface Episode {
   name: string;
@@ -147,16 +148,10 @@ export default function Home() {
     }
   };
 
-  const loadRecentlyPlayed = () => {
-    try {
-      const saved = localStorage.getItem('recently_played');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setRecentlyPlayed(parsed);
-      }
-    } catch (error) {
-      console.error('Error loading recently played:', error);
-    }
+  const loadRecentlyPlayed = async () => {
+    // Per user, from the server. On a browser that still has the old
+    // localStorage data this also imports it into the account first.
+    setRecentlyPlayed(await fetchRecentlyPlayed());
   };
 
   const resumeWatching = (item: RecentlyPlayed) => {

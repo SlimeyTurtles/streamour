@@ -12,6 +12,20 @@ export interface ChangelogEntry {
 // Newest first. The first entry's version is the current site version.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.4.0',
+    date: '2026-11-18',
+    title: 'Your place follows you',
+    changes: {
+      added: [
+        'Watch progress and Continue Watching are saved to your account, so you can start on one device and pick up on another',
+        'Volume and subtitle position and sync are remembered across devices too',
+      ],
+      changed: [
+        'Each device brings its existing progress along automatically the first time it opens the site after this update',
+      ],
+    },
+  },
+  {
     version: '1.3.2',
     date: '2026-11-18',
     title: 'Sign-in protection',

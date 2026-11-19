@@ -1,6 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
+import { fetchRecentlyPlayed } from '@/lib/me-client';
 import { useEffect, useState } from 'react';
 import type { Show, Season, Episode } from '../../api/shows/route';
 
@@ -102,18 +103,11 @@ export default function ShowDetailPage() {
       });
   }, [showId]);
 
-  const loadRecentlyPlayedForShow = (currentShowId: string) => {
-    try {
-      const saved = localStorage.getItem('recently_played');
-      if (saved) {
-        const recentlyPlayed: RecentlyPlayed[] = JSON.parse(saved);
-        const episode = recentlyPlayed.find(item => item.showId === currentShowId);
-        if (episode) {
-          setRecentlyPlayedEpisode(episode);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading recently played:', error);
+  const loadRecentlyPlayedForShow = async (currentShowId: string) => {
+    const recentlyPlayed = await fetchRecentlyPlayed();
+    const episode = recentlyPlayed.find(item => item.showId === currentShowId);
+    if (episode) {
+      setRecentlyPlayedEpisode(episode);
     }
   };
 
