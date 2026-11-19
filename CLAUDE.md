@@ -35,6 +35,8 @@ streamour/
 ├── lib/
 │   ├── changelog.ts              # Drives /updates
 │   ├── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
+│   ├── media-path.ts             # getMediaDir(), resolveMediaPath(): URL segments → path inside the media folder
+│   ├── cache.ts                  # Paths in the writable cache (HLS, thumbnails)
 │   ├── mail.ts                   # sendMail() over a provider (log | resend)
 │   └── mail-templates.ts         # invite, verify email, code, new sign-in
 ├── prisma/
@@ -95,6 +97,15 @@ Email (`lib/mail.ts`): `MAIL_PROVIDER=log` (default; prints to the server log, a
 staging is pinned to it) or `resend` (needs `RESEND_API_KEY`, `MAIL_FROM`). `APP_URL`
 is the public base URL for links in emails. All outbound email goes through
 `sendMail()`; don't call a provider directly.
+
+## Generated files (cache)
+
+The media folder is read-only in production. Never write next to source files:
+generated HLS and thumbnails go under `CACHE_DIR` (`/cache` in Docker, `./.cache` in
+dev), mirrored by media path (`hls/<Show>/<Season>/<file>.mkv/`,
+`thumbnails/<Show>/...`); use the helpers in `lib/cache.ts`. Readers check the cache
+first, then fall back to legacy `<file>.mkv.hls/` folders next to the source. Any route
+that turns URL segments into a media path must use `resolveMediaPath()`.
 
 ## Database
 

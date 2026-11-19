@@ -47,6 +47,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy tools directory for utility scripts (optional)
 COPY --from=builder --chown=nextjs:nodejs /app/tools ./tools
 
+# Writable home for generated HLS and thumbnails. Owned by nextjs here so a
+# named volume mounted at /cache starts out writable; a bind-mounted host
+# directory must be writable by uid 1001 itself.
+RUN mkdir -p /cache && chown nextjs:nodejs /cache
+ENV CACHE_DIR=/cache
+
 # Schema + migrations, the CLI that applies them, and the entrypoint that runs it
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=prisma-cli --chown=nextjs:nodejs /prisma-cli /prisma-cli

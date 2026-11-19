@@ -36,7 +36,8 @@ docker compose up -d
 ```
 
 This starts two containers: the app and its Postgres database (data in the
-`db_data` volume). The app applies pending database migrations every time it
+`db_data` volume). The media folder is mounted read-only; generated HLS and
+thumbnails go to a separate `/cache` volume. The app applies pending database migrations every time it
 starts, so a fresh `docker compose up` creates the schema by itself.
 
 The app will be available at http://localhost:3000
@@ -149,6 +150,8 @@ npm run db:studio                           # Browse the database
 | `AUTH_PASSWORD` | `.env`, `.env.local` | Shared login password (required) |
 | `MEDIA_PATH` | `.env` | Host path to the media library, mounted read-only into the container (required for Docker) |
 | `MEDIA_DIR` | `.env.local` | Media path for `npm run dev`; defaults to `./media` |
+| `CACHE_PATH` | `.env` | Host directory for generated HLS and thumbnails (must be writable by uid 1001). Optional; defaults to a Docker named volume. Production must set it. |
+| `CACHE_DIR` | `.env.local` | Cache directory for `npm run dev`; defaults to `./.cache`. In Docker it is always `/cache`. |
 | `POSTGRES_PASSWORD` | `.env` | Password for the bundled Postgres container (required for Docker) |
 | `POSTGRES_PORT` | `.env` | Host-local port for Postgres; defaults to `5436` |
 | `MAIL_PROVIDER` | `.env`, `.env.local` | `log` (default) prints emails to the server log; `resend` sends them. Staging is always `log`. |

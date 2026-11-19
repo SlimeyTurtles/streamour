@@ -48,3 +48,7 @@ media/
 # Misc
 README.md
 *.md
+
+# Local caches
+.cache
+.wiki
