@@ -1,47 +1,67 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import {
+  createSession,
+  destroySession,
+  ensureOwner,
+  isLegacyPasswordLoginEnabled,
+  OwnerNotConfiguredError,
+  safeEqual,
+} from '@/lib/auth';
 
+// POST { password }: sign in.
+//
+// Legacy household login: for one release the shared AUTH_PASSWORD still works
+// and signs you in as the owner account (see LEGACY_PASSWORD_LOGIN in
+// lib/auth.ts). Per-user email + password sign-in arrives with invites.
 export async function POST(request: NextRequest) {
+  let password: unknown;
   try {
-    const { password } = await request.json();
-    const correctPassword = process.env.AUTH_PASSWORD;
+    ({ password } = await request.json());
+  } catch {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
+  if (typeof password !== 'string' || password.length === 0) {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
 
-    if (!correctPassword) {
-      return NextResponse.json(
-        { error: 'Authentication not configured' },
-        { status: 500 }
-      );
-    }
-
-    if (password === correctPassword) {
-      const response = NextResponse.json({ success: true });
-
-      // Set authentication cookie (expires in 7 days)
-      response.cookies.set('auth', 'authenticated', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-        path: '/',
-      });
-
-      return response;
-    } else {
-      return NextResponse.json(
-        { error: 'Invalid password' },
-        { status: 401 }
-      );
-    }
-  } catch (error) {
+  const sharedPassword = process.env.AUTH_PASSWORD;
+  if (!isLegacyPasswordLoginEnabled() || !sharedPassword) {
     return NextResponse.json(
-      { error: 'Invalid request' },
-      { status: 400 }
+      { error: 'Password sign-in is not available' },
+      { status: 403 }
     );
   }
+
+  if (!safeEqual(password, sharedPassword)) {
+    return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
+  }
+
+  try {
+    const owner = await ensureOwner();
+    await createSession(owner.id);
+  } catch (error) {
+    if (error instanceof OwnerNotConfiguredError) {
+      console.error('Login failed: set OWNER_EMAIL so the owner account can be created.');
+      return NextResponse.json({ error: 'Sign-in is not configured' }, { status: 500 });
+    }
+    console.error('Login failed:', error);
+    return NextResponse.json({ error: 'Sign-in failed' }, { status: 500 });
+  }
+
+  // The pre-sessions cookie; harmless, but no longer means anything.
+  (await cookies()).delete('auth');
+
+  return NextResponse.json({ success: true });
 }
 
+// DELETE: sign out this browser (revokes the session row, clears the cookie).
 export async function DELETE() {
-  const response = NextResponse.json({ success: true });
-  response.cookies.delete('auth');
-  return response;
+  try {
+    await destroySession();
+  } catch (error) {
+    console.error('Logout failed:', error);
+    return NextResponse.json({ error: 'Sign-out failed' }, { status: 500 });
+  }
+  return NextResponse.json({ success: true });
 }

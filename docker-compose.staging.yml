@@ -15,6 +15,10 @@ services:
       # Staging starts from a copy of production's .env; never send real email
       # from it, whatever that file says.
       - MAIL_PROVIDER=log
+      # Staging is plain HTTP on the LAN, so session cookies can't be Secure.
+      - COOKIE_INSECURE=true
+      # Staging's empty database gets its own owner if production has none set.
+      - OWNER_EMAIL=${OWNER_EMAIL:-owner@staging.invalid}
     volumes:
       # Staging's own throwaway cache (removed at teardown), never production's
       # CACHE_PATH from the copied .env.

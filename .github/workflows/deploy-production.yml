@@ -85,6 +85,17 @@ jobs:
           fi
           echo "cache: $cache_path"
 
+      - name: Check owner email
+        # Sign-in creates the owner account from OWNER_EMAIL when the database
+        # has no owner yet. Without it nobody can sign in, so stop before
+        # replacing the running container.
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          if ! grep -qE '^OWNER_EMAIL=.+@.+' .env; then
+            echo "::error::OWNER_EMAIL is not set in $DEPLOY_DIR/.env (see the Deploying wiki page)"
+            exit 1
+          fi
+
       - name: Build + restart
         working-directory: ${{ env.DEPLOY_DIR }}
         run: docker compose -p streamour up -d --build

@@ -15,11 +15,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for authentication cookie
-  const authCookie = request.cookies.get('auth');
-
-  if (!authCookie || authCookie.value !== 'authenticated') {
-    // Redirect to login if not authenticated
+  // Cheap first gate: no session cookie, no entry. The cookie's value is only
+  // verified against the database by lib/auth.ts (getSession/requireSession),
+  // which every data-returning route calls; the middleware can't do that.
+  // Keep the name in sync with SESSION_COOKIE in lib/auth.ts.
+  if (!request.cookies.get('session')?.value) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 

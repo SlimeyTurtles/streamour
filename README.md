@@ -4,7 +4,7 @@ A personal media streaming service built with Next.js. Netflix-like experience f
 
 ## Features
 
-- Password-based authentication
+- Per-user sessions (sign in with the household password for now; accounts and invites are on the roadmap)
 - Auto-discovers shows/seasons/episodes from folder structure
 - MKV files transcoded/remuxed to MP4 on-the-fly via ffmpeg
 - Subtitle support (embedded MKV subtitles or external SRT files)
@@ -25,6 +25,7 @@ Edit `.env` with your settings:
 
 ```
 AUTH_PASSWORD=your_secret_password
+OWNER_EMAIL=you@example.com
 MEDIA_PATH=/path/to/your/media
 POSTGRES_PASSWORD=a_long_random_string   # e.g. openssl rand -hex 24
 ```
@@ -114,6 +115,7 @@ brew install ffmpeg
 3. Create `.env.local`:
    ```
    AUTH_PASSWORD=your_password
+   OWNER_EMAIL=you@example.com
    MEDIA_DIR=/path/to/media
    DATABASE_URL=postgresql://streamour:<POSTGRES_PASSWORD>@localhost:5436/streamour
    ```
@@ -147,7 +149,10 @@ npm run db:studio                           # Browse the database
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `AUTH_PASSWORD` | `.env`, `.env.local` | Shared login password (required) |
+| `AUTH_PASSWORD` | `.env`, `.env.local` | Shared household password. Signs you in as the owner account while `LEGACY_PASSWORD_LOGIN` is on. |
+| `OWNER_EMAIL` | `.env`, `.env.local` | Email of the first owner account, created at the first sign-in (required) |
+| `LEGACY_PASSWORD_LOGIN` | `.env` | `false` turns off sign-in with `AUTH_PASSWORD`. Defaults to on for this release. |
+| `COOKIE_INSECURE` | `.env` | `true` only when serving over plain HTTP; drops the `Secure` flag from the session cookie. Staging sets it. |
 | `MEDIA_PATH` | `.env` | Host path to the media library, mounted read-only into the container (required for Docker) |
 | `MEDIA_DIR` | `.env.local` | Media path for `npm run dev`; defaults to `./media` |
 | `CACHE_PATH` | `.env` | Host directory for generated HLS and thumbnails (must be writable by uid 1001). Optional; defaults to a Docker named volume. Production must set it. |

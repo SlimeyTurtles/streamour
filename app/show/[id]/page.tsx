@@ -77,7 +77,17 @@ export default function ShowDetailPage() {
 
   useEffect(() => {
     fetch('/api/shows')
-      .then(res => res.json())
+      .then(res => {
+        if (res.status === 401) {
+          // Session expired or revoked; sign in again.
+          window.location.href = '/login';
+          return new Promise<Show[]>(() => {});
+        }
+        if (!res.ok) {
+          throw new Error(`Failed to fetch shows (${res.status})`);
+        }
+        return res.json();
+      })
       .then((shows: Show[]) => {
         const foundShow = shows.find(s => s.id === showId);
         if (foundShow) {

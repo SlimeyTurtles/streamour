@@ -34,6 +34,7 @@ streamour/
 │   └── page.tsx                  # Home page with show grid + continue watching
 ├── lib/
 │   ├── changelog.ts              # Drives /updates
+│   ├── auth.ts                   # Sessions: getSession(), requireSession(), createSession(), ensureOwner()
 │   ├── db.ts                     # Prisma client singleton (`import { db } from '@/lib/db'`)
 │   ├── media-path.ts             # getMediaDir(), resolveMediaPath(): URL segments → path inside the media folder
 │   ├── cache.ts                  # Paths in the writable cache (HLS, thumbnails)
@@ -48,7 +49,7 @@ streamour/
 │   ├── fix-mobile-streaming.py   # Mobile compatibility fixes
 │   ├── generate-subtitles.py     # Auto-generate subtitles
 │   └── generate-thumbnails.py    # Generate episode thumbnails
-├── middleware.ts                 # Auth middleware (cookie check)
+├── middleware.ts                 # First gate: redirects to /login when there is no session cookie
 ├── server.js                     # Dev server wrapper with timestamps
 ├── docker-entrypoint.sh          # `prisma migrate deploy`, then starts the app
 └── media/                        # Default media directory
@@ -56,7 +57,7 @@ streamour/
 
 ## Key Features
 
-- **Authentication**: Simple password-based auth with 7-day cookie
+- **Authentication**: Per-user sessions (opaque token in an HttpOnly cookie, hash in the DB, 30 days sliding). For now the only way in is the shared `AUTH_PASSWORD`, which signs you in as the owner account
 - **Media Scanning**: Auto-discovers shows/seasons/episodes from folder structure
 - **Video Streaming**: MKV files transcoded/remuxed to MP4 on-the-fly via ffmpeg (HEVC/H.265 auto-transcoded to H.264 for browser compatibility)
 - **Subtitles**: Embedded MKV subtitles extracted on-the-fly (prefers English), falls back to external SRT files, with position (top/middle/bottom) and sync controls
@@ -86,12 +87,19 @@ media/
 Create `.env.local`:
 ```
 AUTH_PASSWORD=your_password_here
+OWNER_EMAIL=you@example.com   # First owner account, created at first sign-in
 MEDIA_DIR=/path/to/media   # Optional, defaults to ./media
 DATABASE_URL=postgresql://streamour:<POSTGRES_PASSWORD>@localhost:5436/streamour
 ```
 
 For local dev, start the database with `docker compose up -d postgres` (needs
 `POSTGRES_PASSWORD` in `.env`). In Docker, compose builds `DATABASE_URL` itself.
+
+Auth (`lib/auth.ts`): `middleware.ts` only checks that a session cookie exists; it
+cannot verify it. **Every API route that returns data must start with
+`requireSession()`** (returns the session + user, or a 401 response to return as-is).
+`LEGACY_PASSWORD_LOGIN` (default on) lets `AUTH_PASSWORD` sign in as the owner;
+`COOKIE_INSECURE=true` is only for plain-HTTP environments (staging sets it).
 
 Email (`lib/mail.ts`): `MAIL_PROVIDER=log` (default; prints to the server log, and
 staging is pinned to it) or `resend` (needs `RESEND_API_KEY`, `MAIL_FROM`). `APP_URL`
@@ -121,7 +129,7 @@ deleted at teardown.
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/api/auth/login` | POST | Login with `{ password }` |
-| `/api/auth/login` | DELETE | Logout (clears cookie) |
+| `/api/auth/login` | DELETE | Logout (revokes the session, clears cookie) |
 | `/api/shows` | GET | List all shows with seasons/episodes |
 | `/api/health` | GET | Public; 200 when the app is up and can reach the database |
 | `/api/media/[...path]` | GET/HEAD | Serve media files (range support) |

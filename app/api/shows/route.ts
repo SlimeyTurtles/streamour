@@ -4,6 +4,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { getMediaDir } from '@/lib/media-path';
 import { thumbnailCachePath } from '@/lib/cache';
+import { requireSession } from '@/lib/auth';
 
 export interface Show {
   id: string;
@@ -116,6 +117,11 @@ async function scanMediaFolder(): Promise<Show[]> {
 
 export async function GET() {
   try {
+    const auth = await requireSession();
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
     const shows = await scanMediaFolder();
     return NextResponse.json(shows);
   } catch (error) {
