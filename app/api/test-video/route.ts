@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-
-function getMediaDir(): string {
-  const mediaDir = process.env.MEDIA_DIR || 'media';
-  return path.isAbsolute(mediaDir) ? mediaDir : path.join(process.cwd(), mediaDir);
-}
+import { resolveMediaPath } from '@/lib/media-path';
 
 // Debug endpoint to test video serving
 // Access at: /api/test-video
@@ -35,7 +31,10 @@ export async function GET(request: NextRequest) {
   };
 
   if (file) {
-    const filePath = path.join(getMediaDir(), ...file.split('/').map(decodeURIComponent));
+    const filePath = resolveMediaPath(file.split('/'));
+    if (!filePath) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+    }
 
     try {
       const stat = await fs.stat(filePath);
